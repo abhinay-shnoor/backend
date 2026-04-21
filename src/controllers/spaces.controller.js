@@ -48,7 +48,7 @@ const getSpaces = async (req, res) => {
         ORDER BY COALESCE(lm.created_at, s.created_at) DESC
       `;
 
-    const result = await pool.query(query, isAdmin ? [] : [req.user.id]);
+    const result = await pool.query(query, [req.user.id]);
     res.json(result.rows);
   } catch (err) {
     console.error('getSpaces error:', err);
