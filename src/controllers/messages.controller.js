@@ -435,3 +435,18 @@ exports.getMentions = async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch mentions' });
   }
 };
+
+exports.hideMessage = async (req, res) => {
+  const { msgId } = req.params;
+  const userId = req.user.id;
+  try {
+    await pool.query(
+      "INSERT INTO message_hides (message_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [msgId, userId]
+    );
+    res.json({ messageId: msgId, hidden: true });
+  } catch (err) {
+    console.error('hideMessage error:', err);
+    res.status(500).json({ message: 'Failed to hide message' });
+  }
+};
