@@ -46,6 +46,17 @@ const socketHandler = (io) => {
       console.error('auto-join DM rooms failed:', err);
     }
 
+    // Auto-join every space this user is a member of
+    try {
+      const spaceMemberships = await pool.query(
+        `SELECT space_id FROM space_members WHERE user_id = $1`,
+        [userId]
+      );
+      spaceMemberships.rows.forEach(({ space_id }) => socket.join(`space:${space_id}`));
+    } catch (err) {
+      console.error('auto-join spaces failed:', err);
+    }
+
     socket.on('join_space', (spaceId) => socket.join(`space:${spaceId}`));
     socket.on('leave_space', (spaceId) => socket.leave(`space:${spaceId}`));
 
