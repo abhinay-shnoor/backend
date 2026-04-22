@@ -3,10 +3,18 @@ require('dotenv').config();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false, // Required for many cloud DBs like Neon/Render
+  }
 });
 
-pool.on('connect', () => {
-  console.log('Connected to PostgreSQL database');
+// Test connection once on startup
+pool.query('SELECT NOW()', (err) => {
+  if (err) {
+    console.error('Initial database connection failed:', err);
+  } else {
+    console.log('Database connection established successfully');
+  }
 });
 
 pool.on('error', (err) => {
