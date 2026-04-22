@@ -14,6 +14,7 @@ router.delete('/spaces/:id/messages/:msgId', requireAuth, c.deleteSpaceMessage);
 router.get('/messages/:msgId/thread',        requireAuth, c.getThreadReplies);
 router.post('/messages/:msgId/reactions',    requireAuth, c.addReaction);
 router.delete('/messages/:msgId/reactions',  requireAuth, c.removeReaction);
+router.post('/messages/:msgId/hide',        requireAuth, c.hideMessage);
 
 router.get('/dm/:userId/messages',           requireAuth, c.getDMMessages);
 router.post('/dm/:userId/messages',          requireAuth, c.sendDMMessage);

@@ -46,12 +46,13 @@ const MSG_SELECT = `
   LEFT JOIN users    pu ON pu.id = pm.sender_id
   LEFT JOIN message_reactions mr ON mr.message_id = m.id
   LEFT JOIN users ru ON ru.id = mr.user_id
+  LEFT JOIN message_hides mh ON mh.message_id = m.id AND mh.user_id = $1
 `;
 
-const fetchById = (id) =>
+const fetchById = (id, userId) =>
   pool.query(
-    `${MSG_SELECT} WHERE m.id = $1 GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pu.name`,
-    [id]
+    `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.id = $2 GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pu.name`,
+    [userId, id]
   );
 
 // Upload a file to Cloudinary and return its public URL
@@ -81,11 +82,11 @@ exports.getSpaceMessages = async (req, res) => {
   try {
     let query, params;
     if (before) {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE m.space_id=$1 AND m.created_at<$2 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
-      params = [spaceId, before, limit];
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.created_at<$3 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      params = [req.user.id, spaceId, before, limit];
     } else {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE m.space_id=$1 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $2) sub ORDER BY created_at ASC`;
-      params = [spaceId, limit];
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      params = [req.user.id, spaceId, limit];
     }
     const result      = await pool.query(query, params);
     const countResult = await pool.query(`SELECT COUNT(*) FROM messages WHERE space_id=$1 AND parent_message_id IS NULL`, [spaceId]);
@@ -101,8 +102,8 @@ exports.getThreadReplies = async (req, res) => {
   const { msgId } = req.params;
   try {
     const result = await pool.query(
-      `${MSG_SELECT} WHERE m.parent_message_id=$1 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at ASC`,
-      [msgId]
+      `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.parent_message_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at ASC`,
+      [req.user.id, msgId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -126,7 +127,7 @@ exports.sendSpaceMessage = async (req, res) => {
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
       [clean, req.user.id, spaceId, parent_message_id || null, JSON.stringify(attachments || [])]
     );
-    const result  = await fetchById(ins.rows[0].id);
+    const result  = await fetchById(ins.rows[0].id, req.user.id);
     const message = { ...result.rows[0], space_id: spaceId };
     req.app.get('io').to(`space:${spaceId}`).emit('new_message', message);
     res.status(201).json(message);
@@ -153,7 +154,7 @@ exports.editSpaceMessage = async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Message not found or permission denied' });
     }
-    const fullMessageResult = await fetchById(msgId);
+    const fullMessageResult = await fetchById(msgId, req.user.id);
     const message = { ...fullMessageResult.rows[0], space_id: spaceId };
     req.app.get('io').to(`space:${spaceId}`).emit('message:edited', message);
     res.json(message);
@@ -262,11 +263,11 @@ exports.getDMMessages = async (req, res) => {
     const conversationId = convResult.rows[0].id;
     let query, params;
     if (before) {
-      query  = `SELECT * FROM (${MSG_SELECT} WHERE m.conversation_id=$1 AND m.created_at<$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
-      params = [conversationId, before, limit];
+      query  = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      params = [currentUserId, conversationId, before, limit];
     } else {
-      query  = `SELECT * FROM (${MSG_SELECT} WHERE m.conversation_id=$1 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $2) sub ORDER BY created_at ASC`;
-      params = [conversationId, limit];
+      query  = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      params = [currentUserId, conversationId, limit];
     }
     const result      = await pool.query(query, params);
     const countResult = await pool.query(`SELECT COUNT(*) FROM messages WHERE conversation_id=$1`, [conversationId]);
@@ -300,7 +301,7 @@ exports.sendDMMessage = async (req, res) => {
       `INSERT INTO messages (content,sender_id,conversation_id,parent_message_id,attachments) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
       [clean, currentUserId, conversationId, parent_message_id || null, JSON.stringify(attachments || [])]
     );
-    const result  = await fetchById(ins.rows[0].id);
+    const result  = await fetchById(ins.rows[0].id, currentUserId);
     const message = { ...result.rows[0], conversation_id: conversationId };
     const io      = req.app.get('io');
     io.to(`dm:${conversationId}`).emit('new_message', message);
@@ -336,7 +337,7 @@ exports.editDMMessage = async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Message not found or permission denied' });
     }
-    const fullMessageResult = await fetchById(msgId);
+    const fullMessageResult = await fetchById(msgId, currentUserId);
     const message = { ...fullMessageResult.rows[0], conversation_id: conversationId };
     req.app.get('io').to(`dm:${conversationId}`).emit('message:edited', message);
     res.json(message);
