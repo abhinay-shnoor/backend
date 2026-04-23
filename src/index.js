@@ -92,6 +92,7 @@ app.use('/api/users', apiLimiter, usersRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/calendar', apiLimiter, calendarRoutes);
 
+app.use('/uploads', express.static('uploads'));
 app.get('/', (req, res) => res.send('SHNOOR Workspace API running'));
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/db-test', async (req, res) => {

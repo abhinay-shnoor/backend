@@ -56,19 +56,49 @@ const fetchById = (id, userId) =>
     [userId, id]
   );
 
-// Upload a file to Cloudinary and return its public URL
+// Upload a file to Cloudinary (fallback to Local Storage if no credentials)
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
+  
+  const isCloudinaryConfigured = process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY;
+
   try {
-    const result = await uploadBuffer(req.file.buffer, {
-      public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`,
-    });
-    res.json({
-      url:  result.secure_url,
-      name: req.file.originalname,
-      type: req.file.mimetype,
-      size: req.file.size,
-    });
+    if (isCloudinaryConfigured) {
+      const result = await uploadBuffer(req.file.buffer, {
+        public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`,
+      });
+      return res.json({
+        url:  result.secure_url,
+        name: req.file.originalname,
+        type: req.file.mimetype,
+        size: req.file.size,
+      });
+    } else {
+      // Fallback to Local Storage
+      const fs = require('fs');
+      const path = require('path');
+      const uploadDir = path.join(process.cwd(), 'uploads');
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+      const fileName = `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`;
+      const filePath = path.join(uploadDir, fileName);
+      
+      fs.writeFileSync(filePath, req.file.buffer);
+
+      // Construct URL (using CLIENT_URL as a base or relative)
+      // Since backend and frontend might be on different domains, we use the server's own address if possible
+      // But for simplicity, we'll return a relative path or a full path if we can determine the host
+      const protocol = req.protocol;
+      const host = req.get('host');
+      const fileUrl = `${protocol}://${host}/uploads/${fileName}`;
+
+      res.json({
+        url:  fileUrl,
+        name: req.file.originalname,
+        type: req.file.mimetype,
+        size: req.file.size,
+      });
+    }
   } catch (err) {
     console.error('uploadAttachment error:', err);
     res.status(500).json({ message: 'File upload failed' });
