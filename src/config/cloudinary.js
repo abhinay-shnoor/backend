@@ -7,10 +7,18 @@ cloudinary.config({
 });
 
 const uploadBuffer = (buffer, options = {}) => {
+  console.log('Cloudinary uploadBuffer called with options:', JSON.stringify(options));
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       { folder: 'shnoor', resource_type: 'auto', ...options },
-      (err, result) => (err ? reject(err) : resolve(result))
+      (err, result) => {
+        if (err) {
+          console.error('Cloudinary upload error:', err);
+          return reject(err);
+        }
+        console.log('Cloudinary upload success:', result.secure_url);
+        resolve(result);
+      }
     );
     stream.end(buffer);
   });
