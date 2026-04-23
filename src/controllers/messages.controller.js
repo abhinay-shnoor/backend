@@ -4,6 +4,7 @@ const { uploadBuffer } = require('../config/cloudinary');
 const multer = require('multer');
 const http = require('http');
 const https = require('https');
+const { URL } = require('url');
 
 // Multer config — keep files in memory, pass buffer to Cloudinary
 const upload = multer({
