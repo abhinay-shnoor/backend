@@ -70,9 +70,17 @@ exports.uploadAttachment = async (req, res) => {
   }
 
   try {
+    const originalName = req.file.originalname || 'file';
+    const lastDotIndex = originalName.lastIndexOf('.');
+    const ext = lastDotIndex !== -1 ? originalName.substring(lastDotIndex) : '';
+    const baseName = lastDotIndex !== -1 ? originalName.substring(0, lastDotIndex) : originalName;
+    const sanitizedBase = baseName.replace(/[^a-zA-Z0-9]/g, '_');
+
+    const isImage = req.file.mimetype && req.file.mimetype.startsWith('image/');
     const result = await uploadBuffer(req.file.buffer, {
       folder: 'shnoor_attachments',
-      public_id: `${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9]/g, '_')}`,
+      public_id: `${Date.now()}-${sanitizedBase}${ext}`,
+      resource_type: isImage ? 'image' : 'raw'
     });
     
     res.json({
