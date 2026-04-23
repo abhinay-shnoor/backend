@@ -508,25 +508,36 @@ exports.downloadFile = (req, res) => {
   const { url, name } = req.query;
   if (!url) return res.status(400).json({ message: 'URL required' });
 
-  const getter = url.startsWith('https') ? https : http;
+  const fetchFile = (targetUrl) => {
+    const getter = targetUrl.startsWith('https') ? https : http;
+    getter.get(targetUrl, (remoteRes) => {
+      // Handle redirects recursively (Cloudinary/CDNs often have multiple hops)
+      if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
+        let nextUrl = remoteRes.headers.location;
+        if (nextUrl.startsWith('/')) {
+          const urlObj = new URL(targetUrl);
+          nextUrl = `${urlObj.protocol}//${urlObj.host}${nextUrl}`;
+        }
+        return fetchFile(nextUrl);
+      }
 
-  // Handle Cloudinary URLs by proxying them
-  getter.get(url, (remoteRes) => {
-    if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
-      // Follow redirect once
-      const redirectGetter = remoteRes.headers.location.startsWith('https') ? https : http;
-      redirectGetter.get(remoteRes.headers.location, (redirectedRes) => {
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
-        res.setHeader('Content-Type', redirectedRes.headers['content-type'] || 'application/octet-stream');
-        redirectedRes.pipe(res);
-      });
-    } else {
+      if (remoteRes.statusCode !== 200) {
+        console.error(`Download proxy error: Received ${remoteRes.statusCode} for ${targetUrl}`);
+        return res.status(remoteRes.statusCode).send(`Error: Could not fetch file (Status ${remoteRes.statusCode})`);
+      }
+
+      // Set headers to force download with the original filename
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
       res.setHeader('Content-Type', remoteRes.headers['content-type'] || 'application/octet-stream');
+      
       remoteRes.pipe(res);
-    }
-  }).on('error', (err) => {
-    console.error('Download error:', err);
-    res.status(500).json({ message: 'Failed to download file' });
-  });
+    }).on('error', (err) => {
+      console.error('Download proxy connection error:', err);
+      if (!res.headersSent) {
+        res.status(500).send('Failed to connect to file server');
+      }
+    });
+  };
+
+  fetchFile(url);
 };
