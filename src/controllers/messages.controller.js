@@ -60,20 +60,21 @@ const fetchById = (id, userId) =>
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
   
-  const isCloudinaryConfigured = process.env.CLOUDINARY_CLOUD_NAME && 
-                               process.env.CLOUDINARY_API_KEY && 
-                               process.env.CLOUDINARY_API_SECRET;
+  const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
+  const isCloudinaryConfigured = CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET;
 
   if (!isCloudinaryConfigured) {
     return res.status(500).json({ 
-      message: 'Cloudinary is not configured on the server. Please add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET to environment variables.' 
+      message: 'Cloudinary is not configured on the server. Please check your Render environment variables.' 
     });
   }
 
   try {
     const result = await uploadBuffer(req.file.buffer, {
-      public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`,
+      folder: 'shnoor_attachments',
+      public_id: `${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9]/g, '_')}`,
     });
+    
     res.json({
       url:  result.secure_url,
       name: req.file.originalname,
@@ -82,7 +83,7 @@ exports.uploadAttachment = async (req, res) => {
     });
   } catch (err) {
     console.error('uploadAttachment error:', err);
-    res.status(500).json({ message: 'File upload to Cloudinary failed: ' + err.message });
+    res.status(500).json({ message: 'Cloudinary Upload Failed: ' + (err.message || 'Unknown error') });
   }
 };
 
@@ -155,7 +156,6 @@ exports.editSpaceMessage = async (req, res) => {
   if (!content?.trim()) return res.status(400).json({ message: 'Content cannot be empty' });
   const clean = xss(content.trim());
   try {
-    // Single atomic UPDATE — checks ownership + edits in one query, no fetchById needed
     const result = await pool.query(
       `UPDATE messages
        SET content = $1, is_edited = true, updated_at = NOW()
@@ -219,9 +219,11 @@ exports.addReaction = async (req, res) => {
 exports.removeReaction = async (req, res) => {
   const { msgId } = req.params;
   const { emoji } = req.body;
-  if (!emoji) return res.status(400).json({ message: 'Emoji is required' });
   try {
-    await pool.query(`DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3`, [msgId, req.user.id, emoji]);
+    await pool.query(
+      `DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3`,
+      [msgId, req.user.id, emoji]
+    );
     const reactions = await pool.query(
       `SELECT mr.emoji, mr.user_id AS "userId", u.name AS "userName" FROM message_reactions mr JOIN users u ON u.id=mr.user_id WHERE mr.message_id=$1`,
       [msgId]
@@ -240,42 +242,36 @@ exports.removeReaction = async (req, res) => {
 
 exports.searchMessages = async (req, res) => {
   const { q, spaceId, conversationId } = req.query;
-  const currentUserId = req.user.id;
-  if (!q?.trim() || q.trim().length < 2) return res.status(400).json({ message: 'Query must be at least 2 characters' });
+  const userId = req.user.id;
+  if (!q) return res.json([]);
 
   try {
     let sql = `
-      SELECT m.id, m.content, m.created_at, u.name AS sender_name, u.avatar_url,
-             s.name AS space_name, s.id AS space_id,
-             m.conversation_id,
-             CASE WHEN m.space_id IS NOT NULL THEN 'space' ELSE 'dm' END as chat_type,
-             CASE 
-               WHEN m.conversation_id IS NOT NULL THEN (
-                 SELECT u2.name FROM direct_conversations dc2
-                 JOIN users u2 ON (u2.id = dc2.user_one_id OR u2.id = dc2.user_two_id) AND u2.id != $2
-                 WHERE dc2.id = m.conversation_id LIMIT 1
-               ) ELSE NULL 
-             END as dm_partner_name,
-             CASE 
-               WHEN m.conversation_id IS NOT NULL THEN (
-                 SELECT u2.id FROM direct_conversations dc2
-                 JOIN users u2 ON (u2.id = dc2.user_one_id OR u2.id = dc2.user_two_id) AND u2.id != $2
-                 WHERE dc2.id = m.conversation_id LIMIT 1
-               ) ELSE NULL 
-             END as dm_partner_id
+      SELECT 
+        m.id, m.content, m.created_at, m.sender_id, m.space_id, m.conversation_id,
+        u.name AS sender_name,
+        CASE 
+          WHEN m.space_id IS NOT NULL THEN 'space'
+          WHEN m.conversation_id IS NOT NULL THEN 'dm'
+          ELSE 'unknown'
+        END AS chat_type,
+        CASE 
+          WHEN m.space_id IS NOT NULL THEN (SELECT name FROM spaces WHERE id = m.space_id)
+          WHEN m.conversation_id IS NOT NULL THEN (
+            SELECT name FROM users 
+            WHERE id = (
+              SELECT CASE WHEN user_one_id = $1 THEN user_two_id ELSE user_one_id END 
+              FROM direct_conversations WHERE id = m.conversation_id
+            )
+          )
+          ELSE NULL
+        END AS chat_context_name
       FROM messages m
       JOIN users u ON u.id = m.sender_id
-      LEFT JOIN spaces s ON s.id = m.space_id
-      LEFT JOIN direct_conversations dc ON dc.id = m.conversation_id
-      WHERE m.content ILIKE $1
-      AND (
-        (m.space_id IS NOT NULL AND EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = m.space_id AND sm.user_id = $2))
-        OR 
-        (m.conversation_id IS NOT NULL AND (dc.user_one_id = $2 OR dc.user_two_id = $2))
-      )
+      LEFT JOIN message_hides mh ON mh.message_id = m.id AND mh.user_id = $1
+      WHERE mh.message_id IS NULL AND m.content ILIKE $2
     `;
-
-    const params = [`%${q.trim()}%`, currentUserId];
+    const params = [userId, `%${q}%`];
 
     if (spaceId) {
       sql += ` AND m.space_id = $3`;
@@ -379,18 +375,18 @@ exports.editDMMessage = async (req, res) => {
        SET content = $1, is_edited = true, updated_at = NOW()
        WHERE id = $2 AND conversation_id = $3 AND sender_id = $4
        RETURNING id, content, is_edited, updated_at, sender_id`,
-      [clean, msgId, conversationId, currentUserId]
+      [clean, msgId, conversationId, req.user.id]
     );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Message not found or permission denied' });
     }
-    const fullMessageResult = await fetchById(msgId, currentUserId);
+    const fullMessageResult = await fetchById(msgId, req.user.id);
     const message = { ...fullMessageResult.rows[0], conversation_id: conversationId };
     req.app.get('io').to(`dm:${conversationId}`).emit('message:edited', message);
     res.json(message);
   } catch (err) {
     console.error('editDMMessage error:', err);
-    res.status(500).json({ message: 'Failed to edit message' });
+    res.status(500).json({ message: 'Failed to edit DM' });
   }
 };
 
@@ -406,8 +402,8 @@ exports.deleteDMMessage = async (req, res) => {
 
     const check = await pool.query(`SELECT sender_id FROM messages WHERE id=$1 AND conversation_id=$2`, [msgId, conversationId]);
     if (!check.rows.length) return res.status(404).json({ message: 'Message not found' });
-    if (check.rows[0].sender_id !== currentUserId) return res.status(403).json({ message: 'You can only delete your own messages' });
-    
+    if (check.rows[0].sender_id !== req.user.id) return res.status(403).json({ message: 'You can only delete your own messages' });
+
     await pool.query(`DELETE FROM messages WHERE id=$1`, [msgId]);
     req.app.get('io').to(`dm:${conversationId}`).emit('message:deleted', { messageId: msgId, conversationId });
     res.json({ messageId: msgId });
