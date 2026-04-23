@@ -3,6 +3,7 @@ const { requireAuth } = require('../middleware/auth.middleware');
 const c = require('../controllers/messages.controller');
 
 // dm/conversations MUST be before dm/:userId or Express matches 'conversations' as a userId
+router.get('/download', requireAuth, c.downloadFile);
 router.get('/dm/conversations',              requireAuth, c.getDMConversations);
 router.get('/search',                        requireAuth, c.searchMessages);
 
@@ -24,6 +25,5 @@ router.delete('/dm/:userId/messages/:msgId', requireAuth, c.deleteDMMessage);
 router.post('/upload', requireAuth, c.uploadMiddleware, c.uploadAttachment);
 
 router.get('/mentions', requireAuth, c.getMentions);
-router.get('/download', requireAuth, c.downloadFile);
 
 module.exports = router;
