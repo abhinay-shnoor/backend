@@ -82,7 +82,7 @@ exports.uploadAttachment = async (req, res) => {
     const result = await uploadBuffer(req.file.buffer, {
       folder: 'shnoor_attachments',
       public_id: `${Date.now()}-${sanitizedBase}${ext}`,
-      resource_type: isImage ? 'image' : 'raw'
+      resource_type: 'auto'
     });
     
     res.json({
