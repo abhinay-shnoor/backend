@@ -460,25 +460,41 @@ exports.getMentions = async (req, res) => {
   const userId = req.user.id;
   const userName = req.user.name;
   try {
+    const firstName = userName.split(' ')[0];
     const result = await pool.query(`
       SELECT 
-        m.id AS id, 
+        m.id, 
         m.content AS text, 
-        m.created_at AS time, 
+        m.created_at, 
         m.sender_id, 
-        u.name AS "senderName",
-        s.name AS source, 
-        s.id AS "sourceId", 
-        'space' AS "sourceType",
-        (usr.last_read_at IS NULL OR m.created_at > usr.last_read_at) AS is_unread
+        u.name AS sender_name,
+        u.avatar_url,
+        COALESCE(s.name, 'Direct Message') AS source, 
+        COALESCE(m.space_id, m.sender_id) AS "sourceId", 
+        CASE WHEN m.space_id IS NOT NULL THEN 'space' ELSE 'dm' END AS "sourceType",
+        CASE 
+          WHEN m.space_id IS NOT NULL THEN (usr.last_read_at IS NULL OR m.created_at > usr.last_read_at)
+          ELSE (udr.last_read_at IS NULL OR m.created_at > udr.last_read_at)
+        END AS is_unread
       FROM messages m
       JOIN users u ON u.id = m.sender_id
-      JOIN spaces s ON s.id = m.space_id
+      LEFT JOIN spaces s ON s.id = m.space_id
       LEFT JOIN user_space_reads usr ON usr.space_id = m.space_id AND usr.user_id = $1
-      WHERE m.content ILIKE $2
+      LEFT JOIN user_dm_reads udr ON udr.conversation_id = m.conversation_id AND udr.user_id = $1
+      WHERE (
+        m.content ILIKE $2 -- @Full Name
+        OR m.content ILIKE $3 -- @FirstName
+        OR (m.space_id IS NOT NULL AND (m.content ILIKE '%@all%' OR m.content ILIKE '%@everyone%'))
+      )
+      AND m.sender_id != $1
+      AND (
+        (m.space_id IS NOT NULL AND EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = m.space_id AND sm.user_id = $1))
+        OR 
+        (m.conversation_id IS NOT NULL AND EXISTS (SELECT 1 FROM direct_conversations dc WHERE dc.id = m.conversation_id AND (dc.user_one_id = $1 OR dc.user_two_id = $1)))
+      )
       ORDER BY m.created_at DESC 
-      LIMIT 50
-    `, [userId, `%@${userName}%`]);
+      LIMIT 500
+    `, [userId, `%@${userName}%`, `%@${firstName}%`]);
     
     const mentions = result.rows;
     const unreadMentions = mentions.filter(m => m.is_unread).length;
