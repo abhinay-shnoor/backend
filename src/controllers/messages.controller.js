@@ -228,20 +228,55 @@ exports.removeReaction = async (req, res) => {
 };
 
 exports.searchMessages = async (req, res) => {
-  const { q, spaceId } = req.query;
+  const { q, spaceId, conversationId } = req.query;
+  const currentUserId = req.user.id;
   if (!q?.trim() || q.trim().length < 2) return res.status(400).json({ message: 'Query must be at least 2 characters' });
+
   try {
-    const baseQuery = `
+    let sql = `
       SELECT m.id, m.content, m.created_at, u.name AS sender_name, u.avatar_url,
-             s.name AS space_name, s.id AS space_id
+             s.name AS space_name, s.id AS space_id,
+             m.conversation_id,
+             CASE WHEN m.space_id IS NOT NULL THEN 'space' ELSE 'dm' END as chat_type,
+             CASE 
+               WHEN m.conversation_id IS NOT NULL THEN (
+                 SELECT u2.name FROM direct_conversations dc2
+                 JOIN users u2 ON (u2.id = dc2.user_one_id OR u2.id = dc2.user_two_id) AND u2.id != $2
+                 WHERE dc2.id = m.conversation_id LIMIT 1
+               ) ELSE NULL 
+             END as dm_partner_name,
+             CASE 
+               WHEN m.conversation_id IS NOT NULL THEN (
+                 SELECT u2.id FROM direct_conversations dc2
+                 JOIN users u2 ON (u2.id = dc2.user_one_id OR u2.id = dc2.user_two_id) AND u2.id != $2
+                 WHERE dc2.id = m.conversation_id LIMIT 1
+               ) ELSE NULL 
+             END as dm_partner_id
       FROM messages m
-      JOIN users u  ON u.id  = m.sender_id
-      JOIN spaces s ON s.id  = m.space_id
-      WHERE m.content ILIKE $1 ${spaceId ? 'AND m.space_id=$2' : ''}
-      ORDER BY m.created_at DESC LIMIT 30
+      JOIN users u ON u.id = m.sender_id
+      LEFT JOIN spaces s ON s.id = m.space_id
+      LEFT JOIN direct_conversations dc ON dc.id = m.conversation_id
+      WHERE m.content ILIKE $1
+      AND (
+        (m.space_id IS NOT NULL AND EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = m.space_id AND sm.user_id = $2))
+        OR 
+        (m.conversation_id IS NOT NULL AND (dc.user_one_id = $2 OR dc.user_two_id = $2))
+      )
     `;
-    const params = spaceId ? [`%${q.trim()}%`, spaceId] : [`%${q.trim()}%`];
-    const result = await pool.query(baseQuery, params);
+
+    const params = [`%${q.trim()}%`, currentUserId];
+
+    if (spaceId) {
+      sql += ` AND m.space_id = $3`;
+      params.push(spaceId);
+    } else if (conversationId) {
+      sql += ` AND m.conversation_id = $3`;
+      params.push(conversationId);
+    }
+
+    sql += ` ORDER BY m.created_at DESC LIMIT 50`;
+
+    const result = await pool.query(sql, params);
     res.json(result.rows);
   } catch (err) {
     console.error('searchMessages error:', err);
