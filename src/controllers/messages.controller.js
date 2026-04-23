@@ -501,3 +501,28 @@ exports.hideMessage = async (req, res) => {
     res.status(500).json({ message: 'Failed to hide message' });
   }
 };
+
+const https = require('https');
+exports.downloadFile = (req, res) => {
+  const { url, name } = req.query;
+  if (!url) return res.status(400).json({ message: 'URL required' });
+
+  // Handle Cloudinary URLs by proxying them
+  https.get(url, (remoteRes) => {
+    if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
+      // Follow redirect once
+      https.get(remoteRes.headers.location, (redirectedRes) => {
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
+        res.setHeader('Content-Type', redirectedRes.headers['content-type'] || 'application/octet-stream');
+        redirectedRes.pipe(res);
+      });
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
+      res.setHeader('Content-Type', remoteRes.headers['content-type'] || 'application/octet-stream');
+      remoteRes.pipe(res);
+    }
+  }).on('error', (err) => {
+    console.error('Download error:', err);
+    res.status(500).json({ message: 'Failed to download file' });
+  });
+};

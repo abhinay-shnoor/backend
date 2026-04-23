@@ -24,5 +24,6 @@ router.delete('/dm/:userId/messages/:msgId', requireAuth, c.deleteDMMessage);
 router.post('/upload', requireAuth, c.uploadMiddleware, c.uploadAttachment);
 
 router.get('/mentions', requireAuth, c.getMentions);
+router.get('/download', requireAuth, c.downloadFile);
 
 module.exports = router;
