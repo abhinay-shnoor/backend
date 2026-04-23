@@ -21,6 +21,7 @@ const MSG_SELECT = `
     m.sender_id,
     m.parent_message_id,
     m.attachments,
+    m.is_forwarded,
     u.name          AS sender_name,
     u.avatar_url,
     u.email         AS sender_email,
@@ -114,7 +115,7 @@ exports.getThreadReplies = async (req, res) => {
 
 exports.sendSpaceMessage = async (req, res) => {
   const { id: spaceId } = req.params;
-  const { content, parent_message_id, attachments } = req.body;
+  const { content, parent_message_id, attachments, is_forwarded } = req.body;
 
   if (!content?.trim() && (!attachments || !attachments.length)) {
     return res.status(400).json({ message: 'Message cannot be empty' });
@@ -123,9 +124,9 @@ exports.sendSpaceMessage = async (req, res) => {
   const clean = content ? xss(content.trim()) : '';
   try {
     const ins = await pool.query(
-      `INSERT INTO messages (content, sender_id, space_id, parent_message_id, attachments)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [clean, req.user.id, spaceId, parent_message_id || null, JSON.stringify(attachments || [])]
+      `INSERT INTO messages (content, sender_id, space_id, parent_message_id, attachments, is_forwarded)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [clean, req.user.id, spaceId, parent_message_id || null, JSON.stringify(attachments || []), is_forwarded || false]
     );
     const result  = await fetchById(ins.rows[0].id, req.user.id);
     const message = { ...result.rows[0], space_id: spaceId };
@@ -282,7 +283,7 @@ exports.getDMMessages = async (req, res) => {
 exports.sendDMMessage = async (req, res) => {
   const { userId: otherUserId } = req.params;
   const currentUserId = req.user.id;
-  const { content, parent_message_id, attachments } = req.body;
+  const { content, parent_message_id, attachments, is_forwarded } = req.body;
 
   if (!content?.trim() && (!attachments || !attachments.length)) {
     return res.status(400).json({ message: 'Message cannot be empty' });
@@ -298,8 +299,8 @@ exports.sendDMMessage = async (req, res) => {
     }
     const conversationId = convResult.rows[0].id;
     const ins    = await pool.query(
-      `INSERT INTO messages (content,sender_id,conversation_id,parent_message_id,attachments) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [clean, currentUserId, conversationId, parent_message_id || null, JSON.stringify(attachments || [])]
+      `INSERT INTO messages (content,sender_id,conversation_id,parent_message_id,attachments,is_forwarded) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [clean, currentUserId, conversationId, parent_message_id || null, JSON.stringify(attachments || []), is_forwarded || false]
     );
     const result  = await fetchById(ins.rows[0].id, currentUserId);
     const message = { ...result.rows[0], conversation_id: conversationId };
