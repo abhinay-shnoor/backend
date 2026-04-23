@@ -4,7 +4,7 @@ async function migrate() {
   try {
     console.log('Starting migration to TIMESTAMPTZ...');
     
-    // 1. Alter message_receipts columns
+    // 1. Alter message_receipts column
     await pool.query(`
       ALTER TABLE message_receipts 
       ALTER COLUMN delivered_at TYPE TIMESTAMPTZ USING delivered_at AT TIME ZONE 'UTC',
