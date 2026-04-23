@@ -56,52 +56,33 @@ const fetchById = (id, userId) =>
     [userId, id]
   );
 
-// Upload a file to Cloudinary (fallback to Local Storage if no credentials)
+// Upload a file to Cloudinary
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
   
-  const isCloudinaryConfigured = process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY;
+  const isCloudinaryConfigured = process.env.CLOUDINARY_CLOUD_NAME && 
+                               process.env.CLOUDINARY_API_KEY && 
+                               process.env.CLOUDINARY_API_SECRET;
+
+  if (!isCloudinaryConfigured) {
+    return res.status(500).json({ 
+      message: 'Cloudinary is not configured on the server. Please add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET to environment variables.' 
+    });
+  }
 
   try {
-    if (isCloudinaryConfigured) {
-      const result = await uploadBuffer(req.file.buffer, {
-        public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`,
-      });
-      return res.json({
-        url:  result.secure_url,
-        name: req.file.originalname,
-        type: req.file.mimetype,
-        size: req.file.size,
-      });
-    } else {
-      // Fallback to Local Storage
-      const fs = require('fs');
-      const path = require('path');
-      const uploadDir = path.join(process.cwd(), 'uploads');
-      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-      const fileName = `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`;
-      const filePath = path.join(uploadDir, fileName);
-      
-      fs.writeFileSync(filePath, req.file.buffer);
-
-      // Construct URL (using CLIENT_URL as a base or relative)
-      // Since backend and frontend might be on different domains, we use the server's own address if possible
-      // But for simplicity, we'll return a relative path or a full path if we can determine the host
-      const protocol = req.protocol;
-      const host = req.get('host');
-      const fileUrl = `${protocol}://${host}/uploads/${fileName}`;
-
-      res.json({
-        url:  fileUrl,
-        name: req.file.originalname,
-        type: req.file.mimetype,
-        size: req.file.size,
-      });
-    }
+    const result = await uploadBuffer(req.file.buffer, {
+      public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`,
+    });
+    res.json({
+      url:  result.secure_url,
+      name: req.file.originalname,
+      type: req.file.mimetype,
+      size: req.file.size,
+    });
   } catch (err) {
     console.error('uploadAttachment error:', err);
-    res.status(500).json({ message: 'File upload failed' });
+    res.status(500).json({ message: 'File upload to Cloudinary failed: ' + err.message });
   }
 };
 
