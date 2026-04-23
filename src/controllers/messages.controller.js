@@ -2,6 +2,8 @@ const pool = require('../config/db');
 const xss  = require('xss');
 const { uploadBuffer } = require('../config/cloudinary');
 const multer = require('multer');
+const http = require('http');
+const https = require('https');
 
 // Multer config — keep files in memory, pass buffer to Cloudinary
 const upload = multer({
@@ -502,16 +504,18 @@ exports.hideMessage = async (req, res) => {
   }
 };
 
-const https = require('https');
 exports.downloadFile = (req, res) => {
   const { url, name } = req.query;
   if (!url) return res.status(400).json({ message: 'URL required' });
 
+  const getter = url.startsWith('https') ? https : http;
+
   // Handle Cloudinary URLs by proxying them
-  https.get(url, (remoteRes) => {
+  getter.get(url, (remoteRes) => {
     if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
       // Follow redirect once
-      https.get(remoteRes.headers.location, (redirectedRes) => {
+      const redirectGetter = remoteRes.headers.location.startsWith('https') ? https : http;
+      redirectGetter.get(remoteRes.headers.location, (redirectedRes) => {
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
         res.setHeader('Content-Type', redirectedRes.headers['content-type'] || 'application/octet-stream');
         redirectedRes.pipe(res);
