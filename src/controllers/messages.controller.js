@@ -511,8 +511,18 @@ exports.downloadFile = (req, res) => {
 
   const fetchFile = (targetUrl) => {
     const getter = targetUrl.startsWith('https') ? https : http;
-    getter.get(targetUrl, (remoteRes) => {
-      // Handle redirects recursively (Cloudinary/CDNs often have multiple hops)
+    const isCloudinary = targetUrl.includes('cloudinary.com');
+    
+    const options = {};
+    if (isCloudinary && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      const auth = Buffer.from(`${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}`).toString('base64');
+      options.headers = {
+        'Authorization': `Basic ${auth}`
+      };
+    }
+
+    getter.get(targetUrl, options, (remoteRes) => {
+      // Handle redirects recursively
       if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
         let nextUrl = remoteRes.headers.location;
         if (nextUrl.startsWith('/')) {
@@ -527,7 +537,6 @@ exports.downloadFile = (req, res) => {
         return res.status(remoteRes.statusCode).send(`Error: Could not fetch file (Status ${remoteRes.statusCode})`);
       }
 
-      // Set headers to force download with the original filename
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
       res.setHeader('Content-Type', remoteRes.headers['content-type'] || 'application/octet-stream');
       
