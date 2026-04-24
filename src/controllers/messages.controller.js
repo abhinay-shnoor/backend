@@ -526,26 +526,31 @@ exports.hideMessage = async (req, res) => {
 
 exports.downloadFile = (req, res) => {
   const { url, name } = req.query;
-  console.log('Download request received for:', { url, name, user: req.user?.id });
+  console.log('[Download] Request:', { url, name, user: req.user?.id });
   if (!url) return res.status(400).json({ message: 'URL required' });
 
-  // Validate URL
   let parsedUrl;
   try { parsedUrl = new URL(url); } catch {
     return res.status(400).json({ message: 'Invalid URL' });
   }
 
-  // Helper: pipe a remote URL to the client response
+  const safeName = (name || 'file').replace(/[^\w.\-() ]/g, '_');
+
+  // ── Helper: proxy any remote URL to client, following redirects ──────
   const proxyRemoteFile = (targetUrl, redirectCount = 0) => {
-    if (redirectCount > 5) {
-      if (!res.headersSent) return res.status(500).send('Too many redirects');
+    if (redirectCount > 10) {
+      if (!res.headersSent) return res.status(502).json({ message: 'Too many redirects' });
       return;
     }
-    const getter = targetUrl.startsWith('https') ? https : http;
-    const options = { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ShnoorProxy/1.0)' } };
+    console.log(`[Download] Proxy fetch (redirect #${redirectCount}):`, targetUrl);
 
-    getter.get(targetUrl, options, (remoteRes) => {
-      if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
+    const getter = targetUrl.startsWith('https') ? https : http;
+    const reqObj = getter.get(targetUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ShnoorProxy/1.0)' },
+      timeout: 30000,
+    }, (remoteRes) => {
+      // Follow redirects manually
+      if ([301, 302, 303, 307, 308].includes(remoteRes.statusCode) && remoteRes.headers.location) {
         let nextUrl = remoteRes.headers.location;
         if (nextUrl.startsWith('/')) {
           const u = new URL(targetUrl);
@@ -556,97 +561,90 @@ exports.downloadFile = (req, res) => {
       }
 
       if (remoteRes.statusCode !== 200) {
-        console.error(`Download proxy error: ${remoteRes.statusCode} for ${targetUrl}`);
+        console.error(`[Download] Remote returned ${remoteRes.statusCode} for ${targetUrl}`);
+        remoteRes.resume();
         if (!res.headersSent)
-          return res.status(502).send(`Error: Could not fetch file (Status ${remoteRes.statusCode})`);
+          return res.status(502).json({ message: `Remote server returned ${remoteRes.statusCode}` });
         return;
       }
 
-      const contentType = remoteRes.headers['content-type'] || 'application/octet-stream';
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
-      res.setHeader('Content-Type', contentType);
-      if (remoteRes.headers['content-length'])
-        res.setHeader('Content-Length', remoteRes.headers['content-length']);
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (!res.headersSent) {
+        const ct = remoteRes.headers['content-type'] || 'application/octet-stream';
+        res.setHeader('Content-Type', ct);
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}"`);
+        if (remoteRes.headers['content-length'])
+          res.setHeader('Content-Length', remoteRes.headers['content-length']);
+        res.setHeader('Cache-Control', 'no-cache');
+      }
       remoteRes.pipe(res);
-    }).on('error', (err) => {
-      console.error('Download proxy connection error:', err);
-      if (!res.headersSent) res.status(500).send('Failed to connect to file server');
+      remoteRes.on('error', (err) => {
+        console.error('[Download] Remote stream error:', err.message);
+        if (!res.headersSent) res.status(502).json({ message: 'Stream error from remote' });
+        else res.end();
+      });
+    });
+
+    reqObj.on('error', (err) => {
+      console.error('[Download] Connection error:', err.message);
+      if (!res.headersSent) res.status(502).json({ message: 'Failed to connect to file server' });
+    });
+    reqObj.on('timeout', () => {
+      reqObj.destroy();
+      if (!res.headersSent) res.status(504).json({ message: 'File server timeout' });
     });
   };
 
-  // ── Local Storage Files: serve directly ─────────────────────────────────
+  // ── 1. Local / same-server files ─────────────────────────────────────
   const serverHost = req.get('host');
-  const renderExternalUrl = process.env.RENDER_EXTERNAL_URL || '';
-  const isLocalFile = parsedUrl.hostname === 'localhost'
+  const renderUrl = process.env.RENDER_EXTERNAL_URL || '';
+  const isLocal = parsedUrl.hostname === 'localhost'
     || parsedUrl.host === serverHost
-    || (renderExternalUrl && url.startsWith(renderExternalUrl));
+    || (renderUrl && url.startsWith(renderUrl));
 
-  if (isLocalFile && parsedUrl.pathname.startsWith('/uploads/')) {
+  if (isLocal && parsedUrl.pathname.startsWith('/uploads/')) {
     try {
       const filename = parsedUrl.pathname.split('/').pop();
       const uploadsDir = path.resolve(path.join(__dirname, '../../uploads'));
       const resolvedPath = path.resolve(path.join(uploadsDir, filename));
-
-      // Security: ensure the path is within uploads directory
-      if (!resolvedPath.startsWith(uploadsDir)) {
-        return res.status(403).json({ message: 'Access denied' });
-      }
-      if (!fs.existsSync(resolvedPath)) {
-        return res.status(404).json({ message: 'File not found' });
-      }
+      if (!resolvedPath.startsWith(uploadsDir)) return res.status(403).json({ message: 'Access denied' });
+      if (!fs.existsSync(resolvedPath)) return res.status(404).json({ message: 'File not found' });
 
       const stat = fs.statSync(resolvedPath);
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Length', stat.size);
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || filename)}"`);
-      res.setHeader('Access-Control-Allow-Origin', '*');
-
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}"`);
       const stream = fs.createReadStream(resolvedPath);
       stream.pipe(res);
       stream.on('error', (err) => {
-        console.error('File stream error:', err);
-        if (!res.headersSent) res.status(500).send('Failed to stream file');
+        console.error('[Download] Local stream error:', err.message);
+        if (!res.headersSent) res.status(500).json({ message: 'File read error' });
       });
       return;
     } catch (err) {
-      console.error('Local file download error:', err);
-      return res.status(500).json({ message: 'Failed to download file' });
+      console.error('[Download] Local file error:', err);
+      return res.status(500).json({ message: 'Failed to read local file' });
     }
   }
 
+  // ── 2. Cloudinary files — proxy the original URL directly ────────────
+  //    Cloudinary public URLs don't need signed access; just proxy them
+  //    with fl_attachment to force download disposition from Cloudinary.
   if (parsedUrl.hostname === 'res.cloudinary.com') {
     try {
-      const match = url.match(
-        /res\.cloudinary\.com\/[^/]+\/(image|raw|video)\/upload\/(?:v\d+\/)?([^?]+)/
-      );
-
-      if (match) {
-        const resourceType = match[1];
-        const publicId = match[2];
-
-        const safeFileName = (name || publicId.split('/').pop())
-          .replace(/[^a-zA-Z0-9._\-]/g, '_');
-
-        const signedUrl = cloudinary.url(publicId, {
-          resource_type: resourceType,
-          type: 'upload',
-          sign_url: true,
-          secure: true,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-          flags: `attachment:${safeFileName}`,
-        });
-
-        console.log('Cloudinary signed proxy for:', publicId);
-        // Proxy the signed URL instead of redirecting (avoids CORS issues)
-        return proxyRemoteFile(signedUrl);
+      // Inject fl_attachment into the Cloudinary URL so Cloudinary itself
+      // sets Content-Disposition: attachment.  This is the most reliable way.
+      let cloudUrl = url;
+      if (!cloudUrl.includes('fl_attachment')) {
+        cloudUrl = cloudUrl.replace('/upload/', `/upload/fl_attachment:${encodeURIComponent(safeName.replace(/\.[^.]+$/, ''))}/`);
       }
+      console.log('[Download] Cloudinary proxy URL:', cloudUrl);
+      return proxyRemoteFile(cloudUrl);
     } catch (err) {
-      console.error('Cloudinary signed URL generation error:', err);
-      // fall through to generic proxy
+      console.error('[Download] Cloudinary URL transform error:', err.message);
+      // Fall through to generic proxy with original URL
     }
   }
 
-  // ── Fallback: generic proxy ─────────────────────────────────────────────
+  // ── 3. S3 / any other remote URL — generic proxy ─────────────────────
   proxyRemoteFile(url);
 };
