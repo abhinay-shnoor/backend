@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 const xss = require('xss');
-const { uploadBuffer } = require('../config/cloudinary');
+const { uploadBuffer, cloudinary } = require('../config/cloudinary');
 const multer = require('multer');
 const http = require('http');
 const https = require('https');
@@ -568,14 +568,53 @@ exports.downloadFile = (req, res) => {
   const { url, name } = req.query;
   if (!url) return res.status(400).json({ message: 'URL required' });
 
-  // Validate URL is from an allowed source (security check)
+  // Validate URL
   let parsedUrl;
-  try {
-    parsedUrl = new URL(url);
-  } catch {
+  try { parsedUrl = new URL(url); } catch {
     return res.status(400).json({ message: 'Invalid URL' });
   }
 
+  // ── Cloudinary URLs: generate a signed URL and redirect ──────────────────
+  // Raw files on Cloudinary return 401 when fetched anonymously because many
+  // Cloudinary accounts restrict unauthenticated raw delivery.
+  // The correct solution is to generate a SHORT-LIVED signed URL via the SDK
+  // (using the account credentials) and redirect the browser directly to it.
+  // Cloudinary validates the signature and serves the file — no proxy needed.
+  if (parsedUrl.hostname === 'res.cloudinary.com') {
+    try {
+      // URL pattern: https://res.cloudinary.com/{cloud}/{resource_type}/upload/[v{n}/]{public_id}
+      const match = url.match(
+        /res\.cloudinary\.com\/[^/]+\/(image|raw|video)\/upload\/(?:v\d+\/)?([^?]+)/
+      );
+
+      if (match) {
+        const resourceType = match[1];   // 'image' | 'raw' | 'video'
+        const publicId = match[2];   // e.g. shnoor_attachments/1234-report.pdf
+
+        // fl_attachment tells Cloudinary CDN to send Content-Disposition: attachment
+        // so the browser downloads rather than trying to render the file.
+        const safeFileName = (name || publicId.split('/').pop())
+          .replace(/[^a-zA-Z0-9._\-]/g, '_');
+
+        const signedUrl = cloudinary.url(publicId, {
+          resource_type: resourceType,
+          type: 'upload',
+          sign_url: true,
+          secure: true,
+          expires_at: Math.floor(Date.now() / 1000) + 3600, // valid 1 hour
+          flags: `attachment:${safeFileName}`,
+        });
+
+        console.log('Cloudinary signed download redirect for:', publicId);
+        return res.redirect(302, signedUrl);
+      }
+    } catch (err) {
+      console.error('Cloudinary signed URL generation error:', err);
+      // fall through to generic proxy
+    }
+  }
+
+  // ── Non-Cloudinary: generic proxy ────────────────────────────────────────
   const fetchFile = (targetUrl, redirectCount = 0) => {
     if (redirectCount > 5) {
       if (!res.headersSent) return res.status(500).send('Too many redirects');
@@ -583,55 +622,36 @@ exports.downloadFile = (req, res) => {
     }
 
     const getter = targetUrl.startsWith('https') ? https : http;
-
-    // NOTE: Cloudinary public files are uploaded without auth restrictions.
-    // Do NOT send Basic auth — it causes Cloudinary to return an HTML error
-    // page instead of the file, which results in a corrupted download.
-    const options = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; ShnoorProxy/1.0)',
-      }
-    };
+    const options = { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ShnoorProxy/1.0)' } };
 
     getter.get(targetUrl, options, (remoteRes) => {
-      // Handle redirects (follow them to get the actual file)
       if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
         let nextUrl = remoteRes.headers.location;
         if (nextUrl.startsWith('/')) {
-          const urlObj = new URL(targetUrl);
-          nextUrl = `${urlObj.protocol}//${urlObj.host}${nextUrl}`;
+          const u = new URL(targetUrl);
+          nextUrl = `${u.protocol}//${u.host}${nextUrl}`;
         }
-        // Consume redirect response body before following
         remoteRes.resume();
         return fetchFile(nextUrl, redirectCount + 1);
       }
 
       if (remoteRes.statusCode !== 200) {
-        console.error(`Download proxy error: Received ${remoteRes.statusCode} for ${targetUrl}`);
-        if (!res.headersSent) {
+        console.error(`Download proxy error: ${remoteRes.statusCode} for ${targetUrl}`);
+        if (!res.headersSent)
           return res.status(502).send(`Error: Could not fetch file (Status ${remoteRes.statusCode})`);
-        }
         return;
       }
 
       const contentType = remoteRes.headers['content-type'] || 'application/octet-stream';
-      const fileName = encodeURIComponent(name || 'file');
-
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
       res.setHeader('Content-Type', contentType);
-      // Forward content-length if available so browser shows download progress
-      if (remoteRes.headers['content-length']) {
+      if (remoteRes.headers['content-length'])
         res.setHeader('Content-Length', remoteRes.headers['content-length']);
-      }
-      // Allow the browser to open the file inline if the user chooses
       res.setHeader('Access-Control-Allow-Origin', '*');
-
       remoteRes.pipe(res);
     }).on('error', (err) => {
       console.error('Download proxy connection error:', err);
-      if (!res.headersSent) {
-        res.status(500).send('Failed to connect to file server');
-      }
+      if (!res.headersSent) res.status(500).send('Failed to connect to file server');
     });
   };
 
