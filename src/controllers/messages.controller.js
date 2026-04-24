@@ -535,97 +535,12 @@ exports.downloadFile = (req, res) => {
     return res.status(400).json({ message: 'Invalid URL' });
   }
 
-  // ── Local Storage Files: serve directly ─────────────────────────────────
-  // For files stored locally on this server, serve them directly from /uploads
-  const serverHost = req.get('host');
-  const isLocalFile = parsedUrl.hostname === 'localhost' || 
-                     parsedUrl.hostname === serverHost ||
-                     parsedUrl.hostname === new URL(`${req.protocol}://${req.get('host')}`).hostname;
-  
-  if (isLocalFile && parsedUrl.pathname.startsWith('/uploads/')) {
-    try {
-      const filename = parsedUrl.pathname.split('/').pop();
-      const filepath = path.join(__dirname, '../../uploads', filename);
-      
-      // Security: ensure the path is within uploads directory
-      const uploadsDir = path.resolve(path.join(__dirname, '../../uploads'));
-      const resolvedPath = path.resolve(filepath);
-      if (!resolvedPath.startsWith(uploadsDir)) {
-        return res.status(403).json({ message: 'Access denied' });
-      }
-
-      // Check if file exists
-      if (!fs.existsSync(resolvedPath)) {
-        return res.status(404).json({ message: 'File not found' });
-      }
-
-      const stat = fs.statSync(resolvedPath);
-      const stream = fs.createReadStream(resolvedPath);
-
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Length', stat.size);
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || filename)}"`);
-      res.setHeader('Access-Control-Allow-Origin', '*');
-
-      stream.pipe(res);
-      stream.on('error', (err) => {
-        console.error('File stream error:', err);
-        if (!res.headersSent) res.status(500).send('Failed to stream file');
-      });
-      return;
-    } catch (err) {
-      console.error('Local file download error:', err);
-      return res.status(500).json({ message: 'Failed to download file' });
-    }
-  }
-
-  // ── Cloudinary URLs: generate a signed URL and redirect ──────────────────
-  // Raw files on Cloudinary return 401 when fetched anonymously because many
-  // Cloudinary accounts restrict unauthenticated raw delivery.
-  // The correct solution is to generate a SHORT-LIVED signed URL via the SDK
-  // (using the account credentials) and redirect the browser directly to it.
-  // Cloudinary validates the signature and serves the file — no proxy needed.
-  if (parsedUrl.hostname === 'res.cloudinary.com') {
-    try {
-      // URL pattern: https://res.cloudinary.com/{cloud}/{resource_type}/upload/[v{n}/]{public_id}
-      const match = url.match(
-        /res\.cloudinary\.com\/[^/]+\/(image|raw|video)\/upload\/(?:v\d+\/)?([^?]+)/
-      );
-
-      if (match) {
-        const resourceType = match[1];   // 'image' | 'raw' | 'video'
-        const publicId = match[2];   // e.g. shnoor_attachments/1234-report.pdf
-
-        // fl_attachment tells Cloudinary CDN to send Content-Disposition: attachment
-        // so the browser downloads rather than trying to render the file.
-        const safeFileName = (name || publicId.split('/').pop())
-          .replace(/[^a-zA-Z0-9._\-]/g, '_');
-
-        const signedUrl = cloudinary.url(publicId, {
-          resource_type: resourceType,
-          type: 'upload',
-          sign_url: true,
-          secure: true,
-          expires_at: Math.floor(Date.now() / 1000) + 3600, // valid 1 hour
-          flags: `attachment:${safeFileName}`,
-        });
-
-        console.log('Cloudinary signed download redirect for:', publicId);
-        return res.redirect(302, signedUrl);
-      }
-    } catch (err) {
-      console.error('Cloudinary signed URL generation error:', err);
-      // fall through to generic proxy
-    }
-  }
-
-  // ── Non-Cloudinary, Non-Local: generic proxy ────────────────────────────
-  const fetchFile = (targetUrl, redirectCount = 0) => {
+  // Helper: pipe a remote URL to the client response
+  const proxyRemoteFile = (targetUrl, redirectCount = 0) => {
     if (redirectCount > 5) {
       if (!res.headersSent) return res.status(500).send('Too many redirects');
       return;
     }
-
     const getter = targetUrl.startsWith('https') ? https : http;
     const options = { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ShnoorProxy/1.0)' } };
 
@@ -637,7 +552,7 @@ exports.downloadFile = (req, res) => {
           nextUrl = `${u.protocol}//${u.host}${nextUrl}`;
         }
         remoteRes.resume();
-        return fetchFile(nextUrl, redirectCount + 1);
+        return proxyRemoteFile(nextUrl, redirectCount + 1);
       }
 
       if (remoteRes.statusCode !== 200) {
@@ -660,5 +575,81 @@ exports.downloadFile = (req, res) => {
     });
   };
 
-  fetchFile(url);
+  // ── Local Storage Files: serve directly ─────────────────────────────────
+  const serverHost = req.get('host');
+  const renderExternalUrl = process.env.RENDER_EXTERNAL_URL || '';
+  const isLocalFile = parsedUrl.hostname === 'localhost'
+    || parsedUrl.host === serverHost
+    || (renderExternalUrl && url.startsWith(renderExternalUrl));
+
+  if (isLocalFile && parsedUrl.pathname.startsWith('/uploads/')) {
+    try {
+      const filename = parsedUrl.pathname.split('/').pop();
+      const uploadsDir = path.resolve(path.join(__dirname, '../../uploads'));
+      const resolvedPath = path.resolve(path.join(uploadsDir, filename));
+
+      // Security: ensure the path is within uploads directory
+      if (!resolvedPath.startsWith(uploadsDir)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      if (!fs.existsSync(resolvedPath)) {
+        return res.status(404).json({ message: 'File not found' });
+      }
+
+      const stat = fs.statSync(resolvedPath);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Length', stat.size);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || filename)}"`);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      const stream = fs.createReadStream(resolvedPath);
+      stream.pipe(res);
+      stream.on('error', (err) => {
+        console.error('File stream error:', err);
+        if (!res.headersSent) res.status(500).send('Failed to stream file');
+      });
+      return;
+    } catch (err) {
+      console.error('Local file download error:', err);
+      return res.status(500).json({ message: 'Failed to download file' });
+    }
+  }
+
+  // ── Cloudinary URLs: proxy via signed URL ───────────────────────────────
+  // Axios (frontend) can't follow cross-origin redirects due to CORS,
+  // so we fetch from Cloudinary server-side and pipe the bytes back.
+  if (parsedUrl.hostname === 'res.cloudinary.com') {
+    try {
+      const match = url.match(
+        /res\.cloudinary\.com\/[^/]+\/(image|raw|video)\/upload\/(?:v\d+\/)?([^?]+)/
+      );
+
+      if (match) {
+        const resourceType = match[1];
+        const publicId = match[2];
+
+        const safeFileName = (name || publicId.split('/').pop())
+          .replace(/[^a-zA-Z0-9._\-]/g, '_');
+
+        const signedUrl = cloudinary.url(publicId, {
+          resource_type: resourceType,
+          type: 'upload',
+          sign_url: true,
+          secure: true,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          flags: `attachment:${safeFileName}`,
+        });
+
+        console.log('Cloudinary signed proxy for:', publicId);
+        // Proxy the signed URL instead of redirecting (avoids CORS issues)
+        return proxyRemoteFile(signedUrl);
+      }
+    } catch (err) {
+      console.error('Cloudinary signed URL generation error:', err);
+      // fall through to generic proxy
+    }
+  }
+
+  // ── Fallback: generic proxy ─────────────────────────────────────────────
+  proxyRemoteFile(url);
 };
