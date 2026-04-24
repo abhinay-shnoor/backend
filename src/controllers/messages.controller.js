@@ -75,15 +75,29 @@ exports.uploadAttachment = async (req, res) => {
   try {
     const originalName = req.file.originalname || 'file';
     const lastDotIndex = originalName.lastIndexOf('.');
-    const ext = lastDotIndex !== -1 ? originalName.substring(lastDotIndex) : '';
+    const ext = lastDotIndex !== -1 ? originalName.substring(lastDotIndex).toLowerCase() : '';
     const baseName = lastDotIndex !== -1 ? originalName.substring(0, lastDotIndex) : originalName;
     const sanitizedBase = baseName.replace(/[^a-zA-Z0-9]/g, '_');
 
     const isImage = req.file.mimetype && req.file.mimetype.startsWith('image/');
+
+    // KEY FIX: Use explicit resource_type — never 'auto' for non-image files.
+    // With 'auto', Cloudinary sees a public_id ending in '.pdf'/'.docx'/'.zip' and
+    // tries to route it through its image pipeline, which fails for those formats.
+    // Images → 'image' pipeline  |  Everything else → 'raw' storage
+    const resourceType = isImage ? 'image' : 'raw';
+
+    // raw files: keep the extension inside the public_id (it becomes part of the path,
+    // not a format hint, when resource_type is 'raw').
+    // image files: omit the extension so Cloudinary adds the correct one automatically.
+    const publicId = isImage
+      ? `${Date.now()}-${sanitizedBase}`
+      : `${Date.now()}-${sanitizedBase}${ext}`;
+
     const result = await uploadBuffer(req.file.buffer, {
       folder: 'shnoor_attachments',
-      public_id: `${Date.now()}-${sanitizedBase}${ext}`,
-      resource_type: 'auto'
+      public_id: publicId,
+      resource_type: resourceType,
     });
 
     res.json({
@@ -94,7 +108,8 @@ exports.uploadAttachment = async (req, res) => {
     });
   } catch (err) {
     console.error('uploadAttachment error:', err);
-    res.status(500).json({ message: 'Cloudinary Upload Failed: ' + (err.message || 'Unknown error') });
+    // Surface the real error message so it's visible in the UI and easier to debug
+    res.status(500).json({ message: 'File upload failed: ' + (err.message || 'Unknown error') });
   }
 };
 
