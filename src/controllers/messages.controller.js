@@ -95,7 +95,8 @@ exports.uploadAttachment = async (req, res) => {
 
 exports.getSpaceMessages = async (req, res) => {
   const { id: spaceId } = req.params;
-  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  const limit = Math.min(parseInt(req.query.limit) || 50, 5000);
+
   const before = req.query.before;
 
   try {
@@ -148,7 +149,9 @@ exports.sendSpaceMessage = async (req, res) => {
     );
     const result = await fetchById(ins.rows[0].id, req.user.id);
     const message = { ...result.rows[0], space_id: spaceId };
-    req.app.get('io').to(`space:${spaceId}`).emit('new_message', message);
+    const io = req.app.get('io');
+    io.to(`space:${spaceId}`).emit('new_message', message);
+    io.to(`space:${spaceId}`).emit('space:preview_updated', { spaceId });
     res.status(201).json(message);
   } catch (err) {
     console.error('sendSpaceMessage error:', err);
@@ -174,7 +177,9 @@ exports.editSpaceMessage = async (req, res) => {
     }
     const fullMessageResult = await fetchById(msgId, req.user.id);
     const message = { ...fullMessageResult.rows[0], space_id: spaceId };
-    req.app.get('io').to(`space:${spaceId}`).emit('message:edited', message);
+    const io = req.app.get('io');
+    io.to(`space:${spaceId}`).emit('message:edited', message);
+    io.to(`space:${spaceId}`).emit('space:preview_updated', { spaceId });
     res.json(message);
   } catch (err) {
     console.error('editSpaceMessage error:', err);
@@ -189,7 +194,9 @@ exports.deleteSpaceMessage = async (req, res) => {
     if (!check.rows.length) return res.status(404).json({ message: 'Message not found' });
     if (check.rows[0].sender_id !== req.user.id) return res.status(403).json({ message: 'You can only delete your own messages' });
     await pool.query(`DELETE FROM messages WHERE id=$1`, [msgId]);
-    req.app.get('io').to(`space:${spaceId}`).emit('message:deleted', { messageId: msgId, spaceId });
+    const io = req.app.get('io');
+    io.to(`space:${spaceId}`).emit('message:deleted', { messageId: msgId, spaceId });
+    io.to(`space:${spaceId}`).emit('space:preview_updated', { spaceId });
     res.json({ messageId: msgId });
   } catch (err) {
     console.error('deleteSpaceMessage error:', err);
@@ -300,7 +307,8 @@ exports.searchMessages = async (req, res) => {
 exports.getDMMessages = async (req, res) => {
   const { userId: otherUserId } = req.params;
   const currentUserId = req.user.id;
-  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  const limit = Math.min(parseInt(req.query.limit) || 50, 5000);
+
   const before = req.query.before;
 
   try {
