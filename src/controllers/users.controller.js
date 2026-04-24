@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 const { uploadBuffer } = require('../config/cloudinary');
-const { uploadSingleAvatar, saveFile } = require('../config/localStorage');
+const { uploadSingleAvatar, saveFileToStorage } = require('../config/storage');
 
 exports.avatarUploadMiddleware = uploadSingleAvatar;
 
@@ -76,12 +76,12 @@ exports.updateAvatar = async (req, res) => {
   }
 };
 
-// Upload avatar to local storage — stores a URL instead of base64
+// Upload avatar to appropriate storage (S3 or local)
 exports.uploadAvatarToCloud = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
   try {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const fileData = saveFile(req.file, baseUrl);
+    const fileData = await saveFileToStorage(req.file, baseUrl, 'avatars');
     
     const dbResult = await pool.query(
       `UPDATE users SET avatar_url=$1 WHERE id=$2 RETURNING id,name,email,avatar_url,role`,

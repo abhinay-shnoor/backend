@@ -1,12 +1,12 @@
 const pool = require('../config/db');
 const xss = require('xss');
 const { uploadBuffer, cloudinary } = require('../config/cloudinary');
-const { uploadSingleFile, saveFile } = require('../config/localStorage');
+const { uploadSingleFile, saveFileToStorage } = require('../config/storage');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-// Use local storage instead of Cloudinary
+// Use intelligent storage (S3 for production/Render, local for development)
 exports.uploadMiddleware = uploadSingleFile;
 
 // Base SELECT used by every message fetch — returns reactions, parent info,
@@ -55,15 +55,15 @@ const fetchById = (id, userId) =>
     [userId, id]
   );
 
-// Upload a file locally
+// Upload a file to appropriate storage (S3 or local)
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
 
   try {
-    // Get the base URL from the request
+    // Get the base URL from the request (used for local storage)
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     
-    const fileData = saveFile(req.file, baseUrl);
+    const fileData = await saveFileToStorage(req.file, baseUrl, 'attachments');
     res.json(fileData);
   } catch (err) {
     console.error('uploadAttachment error:', err);
