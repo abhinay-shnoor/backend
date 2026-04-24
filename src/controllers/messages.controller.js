@@ -5,6 +5,8 @@ const { uploadSingleFile, saveFileToStorage } = require('../config/storage');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
 
 // Use intelligent storage (S3 for production/Render, local for development)
 exports.uploadMiddleware = uploadSingleFile;
@@ -533,6 +535,50 @@ exports.downloadFile = (req, res) => {
     return res.status(400).json({ message: 'Invalid URL' });
   }
 
+  // ── Local Storage Files: serve directly ─────────────────────────────────
+  // For files stored locally on this server, serve them directly from /uploads
+  const serverHost = req.get('host');
+  const isLocalFile = parsedUrl.hostname === 'localhost' || 
+                     parsedUrl.hostname === serverHost ||
+                     parsedUrl.hostname === new URL(`${req.protocol}://${req.get('host')}`).hostname;
+  
+  if (isLocalFile && parsedUrl.pathname.startsWith('/uploads/')) {
+    try {
+      const filename = parsedUrl.pathname.split('/').pop();
+      const filepath = path.join(__dirname, '../../uploads', filename);
+      
+      // Security: ensure the path is within uploads directory
+      const uploadsDir = path.resolve(path.join(__dirname, '../../uploads'));
+      const resolvedPath = path.resolve(filepath);
+      if (!resolvedPath.startsWith(uploadsDir)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+
+      // Check if file exists
+      if (!fs.existsSync(resolvedPath)) {
+        return res.status(404).json({ message: 'File not found' });
+      }
+
+      const stat = fs.statSync(resolvedPath);
+      const stream = fs.createReadStream(resolvedPath);
+
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Length', stat.size);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || filename)}"`);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      stream.pipe(res);
+      stream.on('error', (err) => {
+        console.error('File stream error:', err);
+        if (!res.headersSent) res.status(500).send('Failed to stream file');
+      });
+      return;
+    } catch (err) {
+      console.error('Local file download error:', err);
+      return res.status(500).json({ message: 'Failed to download file' });
+    }
+  }
+
   // ── Cloudinary URLs: generate a signed URL and redirect ──────────────────
   // Raw files on Cloudinary return 401 when fetched anonymously because many
   // Cloudinary accounts restrict unauthenticated raw delivery.
@@ -573,7 +619,7 @@ exports.downloadFile = (req, res) => {
     }
   }
 
-  // ── Non-Cloudinary: generic proxy ────────────────────────────────────────
+  // ── Non-Cloudinary, Non-Local: generic proxy ────────────────────────────
   const fetchFile = (targetUrl, redirectCount = 0) => {
     if (redirectCount > 5) {
       if (!res.headersSent) return res.status(500).send('Too many redirects');
