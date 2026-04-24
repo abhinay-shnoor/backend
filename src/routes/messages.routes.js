@@ -27,4 +27,8 @@ router.post('/upload', requireAuth, c.uploadMiddleware, c.uploadAttachment);
 router.get('/mentions', requireAuth, c.getMentions);
 router.post('/mentions/mark-read', requireAuth, c.markMentionsRead);
 
+router.get('/starred', requireAuth, c.getStarredMessages);
+router.post('/messages/:msgId/star', requireAuth, c.starMessage);
+router.delete('/messages/:msgId/star', requireAuth, c.unstarMessage);
+
 module.exports = router;

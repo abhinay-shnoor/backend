@@ -42,7 +42,8 @@ const MSG_SELECT = `
       (SELECT json_agg(json_build_object('userId', user_id, 'deliveredAt', delivered_at, 'seenAt', seen_at))
        FROM message_receipts WHERE message_id = m.id),
       '[]'::json
-    ) AS receipts
+    ) AS receipts,
+    EXISTS (SELECT 1 FROM starred_messages sm WHERE sm.message_id = m.id AND sm.user_id = $1) AS is_starred
   FROM messages m
   JOIN  users u  ON u.id  = m.sender_id
   LEFT JOIN messages pm ON pm.id = m.parent_message_id
@@ -665,4 +666,51 @@ exports.downloadFile = (req, res) => {
 
   // ── 3. S3 / any other remote URL — generic proxy ─────────────────────
   proxyRemoteFile(url);
+};
+
+exports.starMessage = async (req, res) => {
+  const { msgId } = req.params;
+  const userId = req.user.id;
+  try {
+    await pool.query(
+      "INSERT INTO starred_messages (user_id, message_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [userId, msgId]
+    );
+    res.json({ messageId: msgId, starred: true });
+  } catch (err) {
+    console.error('starMessage error:', err);
+    res.status(500).json({ message: 'Failed to star message' });
+  }
+};
+
+exports.unstarMessage = async (req, res) => {
+  const { msgId } = req.params;
+  const userId = req.user.id;
+  try {
+    await pool.query(
+      "DELETE FROM starred_messages WHERE user_id = $1 AND message_id = $2",
+      [userId, msgId]
+    );
+    res.json({ messageId: msgId, starred: false });
+  } catch (err) {
+    console.error('unstarMessage error:', err);
+    res.status(500).json({ message: 'Failed to unstar message' });
+  }
+};
+
+exports.getStarredMessages = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const result = await pool.query(
+      `${MSG_SELECT} JOIN starred_messages sm_top ON sm_top.message_id = m.id AND sm_top.user_id = $1 
+       WHERE mh.message_id IS NULL 
+       GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pm.attachments, pu.name, sm_top.created_at 
+       ORDER BY sm_top.created_at DESC`,
+      [userId]
+    );
+    res.json({ messages: result.rows });
+  } catch (err) {
+    console.error('getStarredMessages error:', err);
+    res.status(500).json({ message: 'Failed to fetch starred messages' });
+  }
 };
