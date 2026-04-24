@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const xss  = require('xss');
+const xss = require('xss');
 const { uploadBuffer } = require('../config/cloudinary');
 const multer = require('multer');
 const http = require('http');
@@ -62,13 +62,13 @@ const fetchById = (id, userId) =>
 // Upload a file to Cloudinary
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
-  
+
   const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
   const isCloudinaryConfigured = CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET;
 
   if (!isCloudinaryConfigured) {
-    return res.status(500).json({ 
-      message: 'Cloudinary is not configured on the server. Please check your Render environment variables.' 
+    return res.status(500).json({
+      message: 'Cloudinary is not configured on the server. Please check your Render environment variables.'
     });
   }
 
@@ -85,9 +85,9 @@ exports.uploadAttachment = async (req, res) => {
       public_id: `${Date.now()}-${sanitizedBase}${ext}`,
       resource_type: 'auto'
     });
-    
+
     res.json({
-      url:  result.secure_url,
+      url: result.secure_url,
       name: req.file.originalname,
       type: req.file.mimetype,
       size: req.file.size,
@@ -100,7 +100,7 @@ exports.uploadAttachment = async (req, res) => {
 
 exports.getSpaceMessages = async (req, res) => {
   const { id: spaceId } = req.params;
-  const limit  = Math.min(parseInt(req.query.limit) || 50, 100);
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
   const before = req.query.before;
 
   try {
@@ -112,9 +112,9 @@ exports.getSpaceMessages = async (req, res) => {
       query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
       params = [req.user.id, spaceId, limit];
     }
-    const result      = await pool.query(query, params);
+    const result = await pool.query(query, params);
     const countResult = await pool.query(`SELECT COUNT(*) FROM messages WHERE space_id=$1 AND parent_message_id IS NULL`, [spaceId]);
-    const total       = parseInt(countResult.rows[0].count);
+    const total = parseInt(countResult.rows[0].count);
     res.json({ messages: result.rows, total, hasMore: result.rows.length === limit && total > limit });
   } catch (err) {
     console.error('getSpaceMessages error:', err);
@@ -151,7 +151,7 @@ exports.sendSpaceMessage = async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
       [clean, req.user.id, spaceId, parent_message_id || null, JSON.stringify(attachments || []), is_forwarded || false]
     );
-    const result  = await fetchById(ins.rows[0].id, req.user.id);
+    const result = await fetchById(ins.rows[0].id, req.user.id);
     const message = { ...result.rows[0], space_id: spaceId };
     req.app.get('io').to(`space:${spaceId}`).emit('new_message', message);
     res.status(201).json(message);
@@ -216,7 +216,7 @@ exports.addReaction = async (req, res) => {
       [msgId]
     );
     const msgInfo = await pool.query(`SELECT space_id,conversation_id FROM messages WHERE id=$1`, [msgId]);
-    const io      = req.app.get('io');
+    const io = req.app.get('io');
     const payload = { messageId: msgId, reactions: reactions.rows };
     if (msgInfo.rows[0]?.space_id) io.to(`space:${msgInfo.rows[0].space_id}`).emit('reaction:updated', payload);
     else if (msgInfo.rows[0]?.conversation_id) io.to(`dm:${msgInfo.rows[0].conversation_id}`).emit('reaction:updated', payload);
@@ -240,7 +240,7 @@ exports.removeReaction = async (req, res) => {
       [msgId]
     );
     const msgInfo = await pool.query(`SELECT space_id,conversation_id FROM messages WHERE id=$1`, [msgId]);
-    const io      = req.app.get('io');
+    const io = req.app.get('io');
     const payload = { messageId: msgId, reactions: reactions.rows };
     if (msgInfo.rows[0]?.space_id) io.to(`space:${msgInfo.rows[0].space_id}`).emit('reaction:updated', payload);
     else if (msgInfo.rows[0]?.conversation_id) io.to(`dm:${msgInfo.rows[0].conversation_id}`).emit('reaction:updated', payload);
@@ -305,27 +305,27 @@ exports.searchMessages = async (req, res) => {
 exports.getDMMessages = async (req, res) => {
   const { userId: otherUserId } = req.params;
   const currentUserId = req.user.id;
-  const limit  = Math.min(parseInt(req.query.limit) || 50, 100);
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
   const before = req.query.before;
 
   try {
     const a = currentUserId < otherUserId ? currentUserId : otherUserId;
-    const b = currentUserId < otherUserId ? otherUserId  : currentUserId;
+    const b = currentUserId < otherUserId ? otherUserId : currentUserId;
     const convResult = await pool.query(`SELECT id FROM direct_conversations WHERE user_one_id=$1 AND user_two_id=$2`, [a, b]);
     if (!convResult.rows.length) return res.json({ messages: [], total: 0, hasMore: false, conversationId: null });
 
     const conversationId = convResult.rows[0].id;
     let query, params;
     if (before) {
-      query  = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
       params = [currentUserId, conversationId, before, limit];
     } else {
-      query  = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
       params = [currentUserId, conversationId, limit];
     }
-    const result      = await pool.query(query, params);
+    const result = await pool.query(query, params);
     const countResult = await pool.query(`SELECT COUNT(*) FROM messages WHERE conversation_id=$1`, [conversationId]);
-    const total       = parseInt(countResult.rows[0].count);
+    const total = parseInt(countResult.rows[0].count);
     res.json({ messages: result.rows, total, hasMore: total > limit, conversationId });
   } catch (err) {
     console.error('getDMMessages error:', err);
@@ -345,19 +345,19 @@ exports.sendDMMessage = async (req, res) => {
 
   try {
     const a = currentUserId < otherUserId ? currentUserId : otherUserId;
-    const b = currentUserId < otherUserId ? otherUserId  : currentUserId;
+    const b = currentUserId < otherUserId ? otherUserId : currentUserId;
     let convResult = await pool.query(`SELECT id FROM direct_conversations WHERE user_one_id=$1 AND user_two_id=$2`, [a, b]);
     if (!convResult.rows.length) {
       convResult = await pool.query(`INSERT INTO direct_conversations (user_one_id,user_two_id) VALUES ($1,$2) RETURNING id`, [a, b]);
     }
     const conversationId = convResult.rows[0].id;
-    const ins    = await pool.query(
+    const ins = await pool.query(
       `INSERT INTO messages (content,sender_id,conversation_id,parent_message_id,attachments,is_forwarded) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
       [clean, currentUserId, conversationId, parent_message_id || null, JSON.stringify(attachments || []), is_forwarded || false]
     );
-    const result  = await fetchById(ins.rows[0].id, currentUserId);
+    const result = await fetchById(ins.rows[0].id, currentUserId);
     const message = { ...result.rows[0], conversation_id: conversationId };
-    const io      = req.app.get('io');
+    const io = req.app.get('io');
     io.to(`dm:${conversationId}`).emit('new_message', message);
     io.to(`user:${currentUserId}`).emit('dm:preview_updated', { conversationId });
     io.to(`user:${otherUserId}`).emit('dm:preview_updated', { conversationId });
@@ -376,7 +376,7 @@ exports.editDMMessage = async (req, res) => {
   const clean = xss(content.trim());
   try {
     const a = currentUserId < otherUserId ? currentUserId : otherUserId;
-    const b = currentUserId < otherUserId ? otherUserId  : currentUserId;
+    const b = currentUserId < otherUserId ? otherUserId : currentUserId;
     const convResult = await pool.query(`SELECT id FROM direct_conversations WHERE user_one_id=$1 AND user_two_id=$2`, [a, b]);
     if (!convResult.rows.length) return res.status(404).json({ message: 'Conversation not found' });
     const conversationId = convResult.rows[0].id;
@@ -406,7 +406,7 @@ exports.deleteDMMessage = async (req, res) => {
   const currentUserId = req.user.id;
   try {
     const a = currentUserId < otherUserId ? currentUserId : otherUserId;
-    const b = currentUserId < otherUserId ? otherUserId  : currentUserId;
+    const b = currentUserId < otherUserId ? otherUserId : currentUserId;
     const convResult = await pool.query(`SELECT id FROM direct_conversations WHERE user_one_id=$1 AND user_two_id=$2`, [a, b]);
     if (!convResult.rows.length) return res.status(404).json({ message: 'Conversation not found' });
     const conversationId = convResult.rows[0].id;
@@ -460,7 +460,20 @@ exports.getMentions = async (req, res) => {
   const userId = req.user.id;
   const userName = req.user.name;
   try {
+    // Ensure the column exists (safe to run on every boot — ADD COLUMN IF NOT EXISTS is idempotent)
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_mention_read_at TIMESTAMPTZ
+    `);
+
     const firstName = userName.split(' ')[0];
+
+    // Fetch the current user's last_mention_read_at so we can mark is_unread correctly
+    const userRow = await pool.query(
+      'SELECT last_mention_read_at FROM users WHERE id = $1',
+      [userId]
+    );
+    const lastReadAt = userRow.rows[0]?.last_mention_read_at || null;
+
     const result = await pool.query(`
       SELECT 
         m.id, 
@@ -473,17 +486,16 @@ exports.getMentions = async (req, res) => {
         COALESCE(m.space_id, m.sender_id) AS "sourceId", 
         CASE WHEN m.space_id IS NOT NULL THEN 'space' ELSE 'dm' END AS "sourceType",
         CASE 
-          WHEN m.space_id IS NOT NULL THEN (usr.last_read_at IS NULL OR m.created_at > usr.last_read_at)
-          ELSE (udr.last_read_at IS NULL OR m.created_at > udr.last_read_at)
+          WHEN $4::timestamptz IS NULL THEN true
+          WHEN m.created_at > $4::timestamptz THEN true
+          ELSE false
         END AS is_unread
       FROM messages m
       JOIN users u ON u.id = m.sender_id
       LEFT JOIN spaces s ON s.id = m.space_id
-      LEFT JOIN user_space_reads usr ON usr.space_id = m.space_id AND usr.user_id = $1
-      LEFT JOIN user_dm_reads udr ON udr.conversation_id = m.conversation_id AND udr.user_id = $1
       WHERE (
-        m.content ILIKE $2 -- @Full Name
-        OR m.content ILIKE $3 -- @FirstName
+        m.content ILIKE $2
+        OR m.content ILIKE $3
         OR (m.space_id IS NOT NULL AND (m.content ILIKE '%@all%' OR m.content ILIKE '%@everyone%'))
       )
       AND m.sender_id != $1
@@ -494,15 +506,31 @@ exports.getMentions = async (req, res) => {
       )
       ORDER BY m.created_at DESC 
       LIMIT 500
-    `, [userId, `%@${userName}%`, `%@${firstName}%`]);
-    
+    `, [userId, `%@${userName}%`, `%@${firstName}%`, lastReadAt]);
+
     const mentions = result.rows;
     const unreadMentions = mentions.filter(m => m.is_unread).length;
-    
+
     res.json({ mentions, unreadMentions });
   } catch (err) {
     console.error('getMentions error:', err);
     res.status(500).json({ message: 'Failed to fetch mentions' });
+  }
+};
+
+// Called when the user opens the Mentions tab — persists the "read up to now" timestamp
+// so the badge resets correctly even after a page refresh.
+exports.markMentionsRead = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    await pool.query(
+      'UPDATE users SET last_mention_read_at = NOW() WHERE id = $1',
+      [userId]               // <-- values array: $1 maps to userId
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('markMentionsRead error:', err);
+    res.status(500).json({ message: 'Failed to mark mentions as read' });
   }
 };
 
@@ -525,37 +553,64 @@ exports.downloadFile = (req, res) => {
   const { url, name } = req.query;
   if (!url) return res.status(400).json({ message: 'URL required' });
 
-  const fetchFile = (targetUrl) => {
-    const getter = targetUrl.startsWith('https') ? https : http;
-    const isCloudinary = targetUrl.includes('cloudinary.com');
-    
-    const options = {};
-    if (isCloudinary && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-      const auth = Buffer.from(`${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}`).toString('base64');
-      options.headers = {
-        'Authorization': `Basic ${auth}`
-      };
+  // Validate URL is from an allowed source (security check)
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return res.status(400).json({ message: 'Invalid URL' });
+  }
+
+  const fetchFile = (targetUrl, redirectCount = 0) => {
+    if (redirectCount > 5) {
+      if (!res.headersSent) return res.status(500).send('Too many redirects');
+      return;
     }
 
+    const getter = targetUrl.startsWith('https') ? https : http;
+
+    // NOTE: Cloudinary public files are uploaded without auth restrictions.
+    // Do NOT send Basic auth — it causes Cloudinary to return an HTML error
+    // page instead of the file, which results in a corrupted download.
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; ShnoorProxy/1.0)',
+      }
+    };
+
     getter.get(targetUrl, options, (remoteRes) => {
-      // Handle redirects recursively
+      // Handle redirects (follow them to get the actual file)
       if (remoteRes.statusCode >= 300 && remoteRes.statusCode < 400 && remoteRes.headers.location) {
         let nextUrl = remoteRes.headers.location;
         if (nextUrl.startsWith('/')) {
           const urlObj = new URL(targetUrl);
           nextUrl = `${urlObj.protocol}//${urlObj.host}${nextUrl}`;
         }
-        return fetchFile(nextUrl);
+        // Consume redirect response body before following
+        remoteRes.resume();
+        return fetchFile(nextUrl, redirectCount + 1);
       }
 
       if (remoteRes.statusCode !== 200) {
         console.error(`Download proxy error: Received ${remoteRes.statusCode} for ${targetUrl}`);
-        return res.status(remoteRes.statusCode).send(`Error: Could not fetch file (Status ${remoteRes.statusCode})`);
+        if (!res.headersSent) {
+          return res.status(502).send(`Error: Could not fetch file (Status ${remoteRes.statusCode})`);
+        }
+        return;
       }
 
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(name || 'file')}"`);
-      res.setHeader('Content-Type', remoteRes.headers['content-type'] || 'application/octet-stream');
-      
+      const contentType = remoteRes.headers['content-type'] || 'application/octet-stream';
+      const fileName = encodeURIComponent(name || 'file');
+
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Type', contentType);
+      // Forward content-length if available so browser shows download progress
+      if (remoteRes.headers['content-length']) {
+        res.setHeader('Content-Length', remoteRes.headers['content-length']);
+      }
+      // Allow the browser to open the file inline if the user chooses
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
       remoteRes.pipe(res);
     }).on('error', (err) => {
       console.error('Download proxy connection error:', err);
