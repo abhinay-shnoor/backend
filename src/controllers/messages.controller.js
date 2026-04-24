@@ -65,7 +65,11 @@ exports.uploadAttachment = async (req, res) => {
     // On Render (ephemeral filesystem), always use Cloudinary for persistence
     if (process.env.RENDER) {
       const buffer = req.file.buffer || fs.readFileSync(req.file.path);
-      const result = await uploadBuffer(buffer, { resource_type: 'auto' });
+      // Use 'raw' for documents (PDF, DOCX, etc.) so Cloudinary stores them correctly.
+      // 'auto' misclassifies PDFs as 'image', making them un-downloadable.
+      const mime = req.file.mimetype || '';
+      const resType = mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'raw';
+      const result = await uploadBuffer(buffer, { resource_type: resType });
       // Clean up temp local file if multer wrote to disk
       if (req.file.path && fs.existsSync(req.file.path)) {
         try { fs.unlinkSync(req.file.path); } catch (_) {}
@@ -641,27 +645,13 @@ exports.downloadFile = (req, res) => {
     }
   }
 
-  // ── 2. Cloudinary files ───────────────────────────────────────────────
-  //    fl_attachment only works for image/video resources.
-  //    For raw resources (PDF, docx, etc.) just proxy the original URL.
+  // ── 2. Cloudinary files — proxy original URL, no transforms ──────────
+  //    proxyRemoteFile already sets Content-Disposition: attachment which
+  //    is all that's needed.  Do NOT add fl_attachment or any other
+  //    Cloudinary transformation — it breaks raw/document files.
   if (parsedUrl.hostname === 'res.cloudinary.com') {
-    const isRaw = url.includes('/raw/upload/');
-    if (isRaw) {
-      // Raw files: proxy the original URL directly — no transformations
-      console.log('[Download] Cloudinary RAW proxy (no transform):', url);
-      return proxyRemoteFile(url);
-    }
-    // Image/video: inject fl_attachment so Cloudinary sets Content-Disposition
-    try {
-      let cloudUrl = url;
-      if (!cloudUrl.includes('fl_attachment')) {
-        cloudUrl = cloudUrl.replace('/upload/', `/upload/fl_attachment:${encodeURIComponent(safeName.replace(/\.[^.]+$/, ''))}/`);
-      }
-      console.log('[Download] Cloudinary image/video proxy:', cloudUrl);
-      return proxyRemoteFile(cloudUrl);
-    } catch (err) {
-      console.error('[Download] Cloudinary URL transform error:', err.message);
-    }
+    console.log('[Download] Cloudinary direct proxy:', url);
+    return proxyRemoteFile(url);
   }
 
   // ── 3. S3 / any other remote URL — generic proxy ─────────────────────
