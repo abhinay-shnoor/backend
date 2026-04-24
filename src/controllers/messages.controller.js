@@ -57,14 +57,29 @@ const fetchById = (id, userId) =>
     [userId, id]
   );
 
-// Upload a file to appropriate storage (S3 or local)
+// Upload a file to appropriate storage (Cloudinary on Render, S3 or local otherwise)
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
 
   try {
-    // Get the base URL from the request (used for local storage)
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    // On Render (ephemeral filesystem), always use Cloudinary for persistence
+    if (process.env.RENDER) {
+      const buffer = req.file.buffer || fs.readFileSync(req.file.path);
+      const result = await uploadBuffer(buffer, { resource_type: 'auto' });
+      // Clean up temp local file if multer wrote to disk
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+      }
+      return res.json({
+        url: result.secure_url,
+        name: req.file.originalname,
+        type: req.file.mimetype,
+        size: req.file.size,
+      });
+    }
 
+    // Non-Render: use configured storage (S3 or local)
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const fileData = await saveFileToStorage(req.file, baseUrl, 'attachments');
     res.json(fileData);
   } catch (err) {
