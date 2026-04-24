@@ -566,6 +566,7 @@ exports.hideMessage = async (req, res) => {
 
 exports.downloadFile = (req, res) => {
   const { url, name } = req.query;
+  console.log('Download request received for:', { url, name, user: req.user?.id });
   if (!url) return res.status(400).json({ message: 'URL required' });
 
   // Validate URL
