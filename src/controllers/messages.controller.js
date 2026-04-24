@@ -28,6 +28,7 @@ const MSG_SELECT = `
     u.email         AS sender_email,
     -- Parent message preview for threaded replies
     pm.content      AS parent_content,
+    pm.attachments  AS parent_attachments,
     pu.name         AS parent_sender_name,
     -- How many replies this message has received
     (SELECT COUNT(*) FROM messages r WHERE r.parent_message_id = m.id)::int AS reply_count,
@@ -53,7 +54,7 @@ const MSG_SELECT = `
 
 const fetchById = (id, userId) =>
   pool.query(
-    `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.id = $2 GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pu.name`,
+    `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.id = $2 GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pm.attachments, pu.name`,
     [userId, id]
   );
 
@@ -100,10 +101,10 @@ exports.getSpaceMessages = async (req, res) => {
   try {
     let query, params;
     if (before) {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.created_at<$3 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.created_at<$3 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
       params = [req.user.id, spaceId, before, limit];
     } else {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
       params = [req.user.id, spaceId, limit];
     }
     const result = await pool.query(query, params);
@@ -120,7 +121,7 @@ exports.getThreadReplies = async (req, res) => {
   const { msgId } = req.params;
   try {
     const result = await pool.query(
-      `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.parent_message_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at ASC`,
+      `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.parent_message_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at ASC`,
       [req.user.id, msgId]
     );
     res.json(result.rows);
@@ -311,10 +312,10 @@ exports.getDMMessages = async (req, res) => {
     const conversationId = convResult.rows[0].id;
     let query, params;
     if (before) {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
       params = [currentUserId, conversationId, before, limit];
     } else {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
       params = [currentUserId, conversationId, limit];
     }
     const result = await pool.query(query, params);
