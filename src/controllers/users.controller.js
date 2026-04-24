@@ -1,9 +1,8 @@
 const pool = require('../config/db');
 const { uploadBuffer } = require('../config/cloudinary');
-const multer = require('multer');
+const { uploadSingleAvatar, saveFile } = require('../config/localStorage');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
-exports.avatarUploadMiddleware = upload.single('avatar');
+exports.avatarUploadMiddleware = uploadSingleAvatar;
 
 exports.getUsers = async (req, res) => {
   try {
@@ -77,17 +76,16 @@ exports.updateAvatar = async (req, res) => {
   }
 };
 
-// Upload avatar to Cloudinary — stores a URL instead of base64
+// Upload avatar to local storage — stores a URL instead of base64
 exports.uploadAvatarToCloud = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
   try {
-    const cloudResult = await uploadBuffer(req.file.buffer, {
-      folder:          'shnoor/avatars',
-      transformation:  [{ width: 200, height: 200, crop: 'fill', gravity: 'face' }],
-    });
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const fileData = saveFile(req.file, baseUrl);
+    
     const dbResult = await pool.query(
       `UPDATE users SET avatar_url=$1 WHERE id=$2 RETURNING id,name,email,avatar_url,role`,
-      [cloudResult.secure_url, req.user.id]
+      [fileData.url, req.user.id]
     );
     res.json(dbResult.rows[0]);
   } catch (err) {

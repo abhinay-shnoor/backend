@@ -1,17 +1,13 @@
 const pool = require('../config/db');
 const xss = require('xss');
 const { uploadBuffer, cloudinary } = require('../config/cloudinary');
-const multer = require('multer');
+const { uploadSingleFile, saveFile } = require('../config/localStorage');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-// Multer config — keep files in memory, pass buffer to Cloudinary
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
-});
-exports.uploadMiddleware = upload.single('file');
+// Use local storage instead of Cloudinary
+exports.uploadMiddleware = uploadSingleFile;
 
 // Base SELECT used by every message fetch — returns reactions, parent info,
 const MSG_SELECT = `
@@ -59,56 +55,18 @@ const fetchById = (id, userId) =>
     [userId, id]
   );
 
-// Upload a file to Cloudinary
+// Upload a file locally
 exports.uploadAttachment = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
 
-  const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
-  const isCloudinaryConfigured = CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET;
-
-  if (!isCloudinaryConfigured) {
-    return res.status(500).json({
-      message: 'Cloudinary is not configured on the server. Please check your Render environment variables.'
-    });
-  }
-
   try {
-    const originalName = req.file.originalname || 'file';
-    const lastDotIndex = originalName.lastIndexOf('.');
-    const ext = lastDotIndex !== -1 ? originalName.substring(lastDotIndex).toLowerCase() : '';
-    const baseName = lastDotIndex !== -1 ? originalName.substring(0, lastDotIndex) : originalName;
-    const sanitizedBase = baseName.replace(/[^a-zA-Z0-9]/g, '_');
-
-    const isImage = req.file.mimetype && req.file.mimetype.startsWith('image/');
-
-    // KEY FIX: Use explicit resource_type — never 'auto' for non-image files.
-    // With 'auto', Cloudinary sees a public_id ending in '.pdf'/'.docx'/'.zip' and
-    // tries to route it through its image pipeline, which fails for those formats.
-    // Images → 'image' pipeline  |  Everything else → 'raw' storage
-    const resourceType = isImage ? 'image' : 'raw';
-
-    // raw files: keep the extension inside the public_id (it becomes part of the path,
-    // not a format hint, when resource_type is 'raw').
-    // image files: omit the extension so Cloudinary adds the correct one automatically.
-    const publicId = isImage
-      ? `${Date.now()}-${sanitizedBase}`
-      : `${Date.now()}-${sanitizedBase}${ext}`;
-
-    const result = await uploadBuffer(req.file.buffer, {
-      folder: 'shnoor_attachments',
-      public_id: publicId,
-      resource_type: resourceType,
-    });
-
-    res.json({
-      url: result.secure_url,
-      name: req.file.originalname,
-      type: req.file.mimetype,
-      size: req.file.size,
-    });
+    // Get the base URL from the request
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    
+    const fileData = saveFile(req.file, baseUrl);
+    res.json(fileData);
   } catch (err) {
     console.error('uploadAttachment error:', err);
-    // Surface the real error message so it's visible in the UI and easier to debug
     res.status(500).json({ message: 'File upload failed: ' + (err.message || 'Unknown error') });
   }
 };
