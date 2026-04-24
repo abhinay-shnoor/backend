@@ -11,33 +11,6 @@ const path = require('path');
 // Use intelligent storage (S3 for production/Render, local for development)
 exports.uploadMiddleware = uploadSingleFile;
 
-// Initialize required tables
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS starred_messages (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(user_id, message_id)
-      );
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS message_hides (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(user_id, message_id)
-      );
-    `);
-    console.log('Starred/Hide tables initialized');
-  } catch (err) {
-    console.error('Failed to initialize tables:', err);
-  }
-})();
-
 // Base SELECT used by every message fetch — returns reactions, parent info,
 const MSG_SELECT = `
   SELECT

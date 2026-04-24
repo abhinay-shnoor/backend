@@ -8,12 +8,35 @@ const pool = new Pool({
   }
 });
 
-// Test connection once on startup
-pool.query('SELECT NOW()', (err) => {
+// Test connection once on startup and initialize tables
+pool.query('SELECT NOW()', async (err) => {
   if (err) {
     console.error('Initial database connection failed:', err);
   } else {
     console.log('Database connection established successfully');
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS starred_messages (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(user_id, message_id)
+        );
+      `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS message_hides (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(user_id, message_id)
+        );
+      `);
+      console.log('Starred/Hide tables initialized successfully');
+    } catch (tableErr) {
+      console.error('Failed to initialize database tables:', tableErr);
+    }
   }
 });
 
