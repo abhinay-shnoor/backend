@@ -64,7 +64,7 @@ exports.uploadAttachment = async (req, res) => {
   try {
     // Get the base URL from the request (used for local storage)
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    
+
     const fileData = await saveFileToStorage(req.file, baseUrl, 'attachments');
     res.json(fileData);
   } catch (err) {
@@ -615,9 +615,6 @@ exports.downloadFile = (req, res) => {
     }
   }
 
-  // ── Cloudinary URLs: proxy via signed URL ───────────────────────────────
-  // Axios (frontend) can't follow cross-origin redirects due to CORS,
-  // so we fetch from Cloudinary server-side and pipe the bytes back.
   if (parsedUrl.hostname === 'res.cloudinary.com') {
     try {
       const match = url.match(
