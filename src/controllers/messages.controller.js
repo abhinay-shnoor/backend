@@ -11,6 +11,33 @@ const path = require('path');
 // Use intelligent storage (S3 for production/Render, local for development)
 exports.uploadMiddleware = uploadSingleFile;
 
+// Initialize required tables
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS starred_messages (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, message_id)
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS message_hides (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, message_id)
+      );
+    `);
+    console.log('Starred/Hide tables initialized');
+  } catch (err) {
+    console.error('Failed to initialize tables:', err);
+  }
+})();
+
 // Base SELECT used by every message fetch — returns reactions, parent info,
 const MSG_SELECT = `
   SELECT
@@ -53,9 +80,11 @@ const MSG_SELECT = `
   LEFT JOIN message_hides mh ON mh.message_id = m.id AND mh.user_id = $1
 `;
 
+const MSG_GROUP_BY = `GROUP BY m.id, u.id, pm.id, pu.id`;
+
 const fetchById = (id, userId) =>
   pool.query(
-    `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.id = $2 GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pm.attachments, pu.name`,
+    `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.id = $2 ${MSG_GROUP_BY}`,
     [userId, id]
   );
 
@@ -103,10 +132,10 @@ exports.getSpaceMessages = async (req, res) => {
   try {
     let query, params;
     if (before) {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.created_at<$3 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.created_at<$3 AND m.parent_message_id IS NULL ${MSG_GROUP_BY} ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
       params = [req.user.id, spaceId, before, limit];
     } else {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.parent_message_id IS NULL GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.space_id=$2 AND m.parent_message_id IS NULL ${MSG_GROUP_BY} ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
       params = [req.user.id, spaceId, limit];
     }
     const result = await pool.query(query, params);
@@ -123,7 +152,7 @@ exports.getThreadReplies = async (req, res) => {
   const { msgId } = req.params;
   try {
     const result = await pool.query(
-      `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.parent_message_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at ASC`,
+      `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.parent_message_id=$2 ${MSG_GROUP_BY} ORDER BY m.created_at ASC`,
       [req.user.id, msgId]
     );
     res.json(result.rows);
@@ -321,10 +350,10 @@ exports.getDMMessages = async (req, res) => {
     const conversationId = convResult.rows[0].id;
     let query, params;
     if (before) {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 AND m.created_at<$3 ${MSG_GROUP_BY} ORDER BY m.created_at DESC LIMIT $4) sub ORDER BY created_at ASC`;
       params = [currentUserId, conversationId, before, limit];
     } else {
-      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 GROUP BY m.id,u.name,u.avatar_url,u.email,pm.content,pm.attachments,pu.name ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
+      query = `SELECT * FROM (${MSG_SELECT} WHERE mh.message_id IS NULL AND m.conversation_id=$2 ${MSG_GROUP_BY} ORDER BY m.created_at DESC LIMIT $3) sub ORDER BY created_at ASC`;
       params = [currentUserId, conversationId, limit];
     }
     const result = await pool.query(query, params);
@@ -704,7 +733,7 @@ exports.getStarredMessages = async (req, res) => {
     const result = await pool.query(
       `${MSG_SELECT} JOIN starred_messages sm_top ON sm_top.message_id = m.id AND sm_top.user_id = $1 
        WHERE mh.message_id IS NULL 
-       GROUP BY m.id, u.name, u.avatar_url, u.email, pm.content, pm.attachments, pu.name, sm_top.created_at 
+       ${MSG_GROUP_BY}, sm_top.created_at 
        ORDER BY sm_top.created_at DESC`,
       [userId]
     );
