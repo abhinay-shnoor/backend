@@ -23,6 +23,15 @@ const MSG_SELECT = `
     m.parent_message_id,
     m.attachments,
     m.is_forwarded,
+    m.space_id,
+    m.conversation_id,
+    CASE 
+      WHEN m.conversation_id IS NOT NULL THEN (
+        SELECT CASE WHEN user_one_id = $1 THEN user_two_id ELSE user_one_id END 
+        FROM direct_conversations WHERE id = m.conversation_id
+      )
+      ELSE NULL
+    END AS dm_partner_id,
     u.name          AS sender_name,
     u.avatar_url,
     u.email         AS sender_email,
