@@ -82,7 +82,10 @@ exports.uploadAttachment = async (req, res) => {
       // 'auto' misclassifies PDFs as 'image', making them un-downloadable.
       const mime = req.file.mimetype || '';
       const resType = mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'raw';
-      const result = await uploadBuffer(buffer, { resource_type: resType });
+      const result = await uploadBuffer(buffer, { 
+        resource_type: resType,
+        access_mode: 'public'
+      });
       
       // Clean up temp local file if multer wrote to disk
       if (req.file.path && fs.existsSync(req.file.path)) {
