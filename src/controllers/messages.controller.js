@@ -610,7 +610,28 @@ exports.downloadFile = (req, res) => {
       }
 
       if (!res.headersSent) {
-        const ct = remoteRes.headers['content-type'] || 'application/octet-stream';
+        let ct = remoteRes.headers['content-type'] || 'application/octet-stream';
+        
+        // If it's a generic stream, try to guess a better MIME type from the file extension
+        if (ct === 'application/octet-stream' || ct === 'binary/octet-stream' || !ct) {
+          const ext = safeName.split('.').pop().toLowerCase();
+          const mimeMap = {
+            'pdf': 'application/pdf',
+            'doc': 'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls': 'application/vnd.ms-excel',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt': 'application/vnd.ms-powerpoint',
+            'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'csv': 'text/csv',
+            'txt': 'text/plain',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png'
+          };
+          if (mimeMap[ext]) ct = mimeMap[ext];
+        }
+
         res.setHeader('Content-Type', ct);
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}"`);
         if (remoteRes.headers['content-length'])
