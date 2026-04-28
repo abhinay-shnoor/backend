@@ -609,21 +609,27 @@ exports.downloadFile = (req, res) => {
         remoteRes.resume();
         try {
           console.log('[Download] 401 detected, attempting signed recovery for:', targetUrl);
-          // Extract public_id from URL: .../upload/v123/folder/id.ext
-          const parts = targetUrl.split('/upload/')[1].split('/');
-          parts.shift(); // remove version (v123)
-          const publicIdWithExt = parts.join('/');
-          const resType = targetUrl.includes('/raw/upload/') ? 'raw' : targetUrl.includes('/video/upload/') ? 'video' : 'image';
           
-          // Generate signed URL that expires in 1 hour
-          const signedUrl = cloudinary.url(publicIdWithExt, {
+          // Extract the path after /upload/ (e.g. v123/shnoor/file.pdf)
+          const uploadPath = targetUrl.split('/upload/')[1];
+          const parts = uploadPath.split('/');
+          // Remove version if it starts with 'v' followed by digits
+          if (parts[0].match(/^v\d+$/)) {
+            parts.shift();
+          }
+          // The remaining parts are the public_id including folders (e.g. shnoor/file.pdf)
+          // For RAW files, the public_id includes the extension if it was uploaded with it.
+          const publicId = parts.join('/');
+          const resType = targetUrl.includes('/raw/') ? 'raw' : targetUrl.includes('/video/') ? 'video' : 'image';
+          
+          const signedUrl = cloudinary.url(publicId, {
             resource_type: resType,
             sign_url: true,
-            secure: true,
-            type: 'upload'
+            type: 'upload',
+            secure: true
           });
           
-          console.log('[Download] Retrying with signed URL');
+          console.log(`[Download] Retrying with signed URL: ${signedUrl}`);
           return proxyRemoteFile(signedUrl);
         } catch (err) {
           console.error('[Download] Signed recovery failed:', err);
