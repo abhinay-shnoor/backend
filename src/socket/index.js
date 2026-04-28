@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 
-// userId → { status: string, sockets: Set<socketId> }
+// userId → { status: string, sockets: Set<socketId>, disconnectTimer: timeout }
 const userPresence = new Map();
 
 const getPresenceMap = () => {
@@ -16,17 +16,34 @@ const socketHandler = (io) => {
     const userId = socket.request.session?.passport?.user;
     if (!userId) { socket.disconnect(true); return; }
 
-    // Personal room — receives targeted events like role changes,
-    // DM preview updates, read receipt confirmations
     socket.join(`user:${userId}`);
 
-    if (!userPresence.has(userId)) {
-      userPresence.set(userId, { status: 'active', sockets: new Set() });
+    // Cancel any pending disconnect timer if the user reconnects/opens new tab
+    if (userPresence.has(userId)) {
+      const data = userPresence.get(userId);
+      if (data.disconnectTimer) {
+        clearTimeout(data.disconnectTimer);
+        data.disconnectTimer = null;
+      }
+      data.sockets.add(socket.id);
+    } else {
+      userPresence.set(userId, { status: 'active', sockets: new Set([socket.id]), disconnectTimer: null });
     }
-    userPresence.get(userId).sockets.add(socket.id);
+    
+    // Broadcast updated presence to everyone
     io.emit('users:presence', getPresenceMap());
 
-    // Listen for manual status updates
+    // Listen for status changes from the frontend (Navbar)
+    socket.on('user:status_change', (status) => {
+      if (userPresence.has(userId)) {
+        userPresence.get(userId).status = status;
+        io.emit('users:presence', getPresenceMap());
+        // Also broadcast the specific "changed" event for instant UI feedback
+        io.emit('user:status_changed', { userId, status });
+      }
+    });
+
+    // Keep legacy support for any other components
     socket.on('status:update', (status) => {
       if (userPresence.has(userId)) {
         userPresence.get(userId).status = status;
@@ -188,9 +205,18 @@ const socketHandler = (io) => {
       const userData = userPresence.get(userId);
       if (userData) {
         userData.sockets.delete(socket.id);
-        if (userData.sockets.size === 0) userPresence.delete(userId);
+        
+        // If this was the last socket, start a disconnect timer (debounce)
+        if (userData.sockets.size === 0) {
+          userData.disconnectTimer = setTimeout(() => {
+            // Check again if still no sockets (user didn't reconnect)
+            if (userData.sockets.size === 0) {
+              userPresence.delete(userId);
+              io.emit('users:presence', getPresenceMap());
+            }
+          }, 5000); // 5-second grace period
+        }
       }
-      io.emit('users:presence', getPresenceMap());
     });
   });
 };
