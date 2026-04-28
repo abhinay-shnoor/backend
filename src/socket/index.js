@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 
-// userId → { status: string, sockets: Set<socketId>, disconnectTimer: timeout }
+// userId → { status: string, sockets: Set<socketId>, disconnectTimer: timeout, lastSeen: timestamp }
 const userPresence = new Map();
 
 const getPresenceMap = () => {
@@ -11,45 +11,124 @@ const getPresenceMap = () => {
   return map;
 };
 
+// PRODUCTION CLEANUP JOB (Runs every 5 seconds)
+// This catches users whose network dropped without firing a disconnect event.
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [uid, data] of userPresence.entries()) {
+    // If no heartbeat for > 15 seconds, force offline
+    if (now - data.lastSeen > 15000) {
+      console.log(`[Socket] Force Pruning stale user ${uid} (No heartbeat for 15s)`);
+      userPresence.delete(uid);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    // We don't have access to 'io' here globally in a clean way unless we store it, 
+    // but in this architecture, we'll let the next event emit the update or 
+    // we can pass 'io' to this job.
+  }
+}, 5000);
+
 const socketHandler = (io) => {
+  // Setup the recurring broadcast for the cleanup job
+  const cleanupJob = setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+    for (const [uid, data] of userPresence.entries()) {
+      if (now - data.lastSeen > 15000) {
+        console.log(`[Socket] Pruning stale user ${uid}`);
+        userPresence.delete(uid);
+        changed = true;
+      }
+    }
+    if (changed) io.emit('users:presence', getPresenceMap());
+  }, 5000);
   io.on('connection', async (socket) => {
     const userId = socket.request.session?.passport?.user;
-    if (!userId) { socket.disconnect(true); return; }
+    if (!userId) { 
+      console.log(`[Socket] Rejected anonymous connection: ${socket.id}`);
+      socket.disconnect(true); 
+      return; 
+    }
 
-    socket.join(`user:${userId}`);
-
-    // Cancel any pending disconnect timer if the user reconnects/opens new tab
+    // Initialize/Update presence on connection
     if (userPresence.has(userId)) {
       const data = userPresence.get(userId);
+      data.lastSeen = Date.now();
       if (data.disconnectTimer) {
+        console.log(`[Socket] Clearing disconnect timer for user ${userId} (Reconnected)`);
         clearTimeout(data.disconnectTimer);
         data.disconnectTimer = null;
       }
       data.sockets.add(socket.id);
     } else {
-      userPresence.set(userId, { status: 'active', sockets: new Set([socket.id]), disconnectTimer: null });
+      console.log(`[Socket] User ${userId} is now Online`);
+      userPresence.set(userId, { 
+        status: 'active', 
+        sockets: new Set([socket.id]), 
+        disconnectTimer: null,
+        lastSeen: Date.now() 
+      });
     }
     
     // Broadcast updated presence to everyone
     io.emit('users:presence', getPresenceMap());
 
+    // HEARTBEAT LISTENER (Production Fallback)
+    socket.on('heartbeat', () => {
+      const data = userPresence.get(userId);
+      if (data) {
+        data.lastSeen = Date.now();
+      } else {
+        // If they were pruned but still sending heartbeats, re-add them
+        userPresence.set(userId, { 
+          status: 'active', 
+          sockets: new Set([socket.id]), 
+          disconnectTimer: null,
+          lastSeen: Date.now() 
+        });
+        io.emit('users:presence', getPresenceMap());
+      }
+    });
+
     // Listen for status changes from the frontend (Navbar)
     socket.on('user:status_change', (status) => {
+      console.log(`[Socket] User ${userId} changed status to: ${status}`);
       if (userPresence.has(userId)) {
         userPresence.get(userId).status = status;
         io.emit('users:presence', getPresenceMap());
-        // Also broadcast the specific "changed" event for instant UI feedback
         io.emit('user:status_changed', { userId, status });
       }
     });
 
-    // Keep legacy support for any other components
-    socket.on('status:update', (status) => {
-      if (userPresence.has(userId)) {
-        userPresence.get(userId).status = status;
-        io.emit('users:presence', getPresenceMap());
+    const handleCleanup = (reason) => {
+      const userData = userPresence.get(userId);
+      if (userData) {
+        userData.sockets.delete(socket.id);
+        console.log(`[Socket] Socket ${socket.id} disconnected (Reason: ${reason}). Remaining sockets for ${userId}: ${userData.sockets.size}`);
+        
+        // If this was the last socket, start a disconnect timer (debounce)
+        if (userData.sockets.size === 0 && !userData.disconnectTimer) {
+          console.log(`[Socket] Last socket for user ${userId} closed. Starting 5s offline timer...`);
+          userData.disconnectTimer = setTimeout(() => {
+            if (userData.sockets.size === 0) {
+              console.log(`[Socket] User ${userId} is now Offline (Grace period expired)`);
+              userPresence.delete(userId);
+              io.emit('users:presence', getPresenceMap());
+            } else {
+              console.log(`[Socket] User ${userId} stayed Online (New tab opened during grace period)`);
+            }
+          }, 5000);
+        }
       }
-    });
+    };
+
+    socket.on('disconnecting', (reason) => handleCleanup(`disconnecting:${reason}`));
+    socket.on('disconnect', (reason) => handleCleanup(`disconnect:${reason}`));
 
     // Auto-join every existing DM room so this user receives real-time DM
     // messages even for conversations they haven't explicitly opened today
@@ -197,25 +276,6 @@ const socketHandler = (io) => {
         io.to(room).emit('receipt:updated', { messageId, receipts: receipts.rows });
       } catch (err) {
         console.error('mark:seen error:', err);
-      }
-    });
-
-    socket.on('disconnect', () => {
-      Object.values(typingTimers).forEach(clearTimeout);
-      const userData = userPresence.get(userId);
-      if (userData) {
-        userData.sockets.delete(socket.id);
-        
-        // If this was the last socket, start a disconnect timer (debounce)
-        if (userData.sockets.size === 0) {
-          userData.disconnectTimer = setTimeout(() => {
-            // Check again if still no sockets (user didn't reconnect)
-            if (userData.sockets.size === 0) {
-              userPresence.delete(userId);
-              io.emit('users:presence', getPresenceMap());
-            }
-          }, 5000); // 5-second grace period
-        }
       }
     });
   });
