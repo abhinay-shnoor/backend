@@ -638,6 +638,13 @@ exports.downloadFile = (req, res) => {
         const isView = req.query.view === 'true';
         res.setHeader('Content-Type', ct);
         res.setHeader('Content-Disposition', `${isView ? 'inline' : 'attachment'}; filename="${encodeURIComponent(safeName)}"`);
+        
+        if (isView) {
+          // Allow embedding in iframes for previews
+          res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://shnoor.vercel.app");
+          res.removeHeader('X-Frame-Options');
+        }
+
         if (remoteRes.headers['content-length'])
           res.setHeader('Content-Length', remoteRes.headers['content-length']);
         res.setHeader('Cache-Control', 'no-cache');
