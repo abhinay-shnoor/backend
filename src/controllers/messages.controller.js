@@ -82,15 +82,7 @@ exports.uploadAttachment = async (req, res) => {
       // 'auto' misclassifies PDFs as 'image', making them un-downloadable.
       const mime = req.file.mimetype || '';
       const resType = mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'raw';
-      
-      // Preserve extension for 'raw' files so Google Docs Viewer can identify them
-      let options = { resource_type: resType };
-      if (resType === 'raw') {
-        const ext = path.extname(req.file.originalname);
-        options.public_id = `shnoor_${Date.now()}_${Math.random().toString(36).substring(7)}${ext}`;
-      }
-
-      const result = await uploadBuffer(buffer, options);
+      const result = await uploadBuffer(buffer, { resource_type: resType });
       
       // Clean up temp local file if multer wrote to disk
       if (req.file.path && fs.existsSync(req.file.path)) {
