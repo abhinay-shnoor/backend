@@ -111,18 +111,14 @@ const socketHandler = (io) => {
         userData.sockets.delete(socket.id);
         console.log(`[Socket] Socket ${socket.id} disconnected (Reason: ${reason}). Remaining sockets for ${userId}: ${userData.sockets.size}`);
         
-        // If this was the last socket, start a disconnect timer (debounce)
-        if (userData.sockets.size === 0 && !userData.disconnectTimer) {
-          console.log(`[Socket] Last socket for user ${userId} closed. Starting 5s offline timer...`);
-          userData.disconnectTimer = setTimeout(() => {
-            if (userData.sockets.size === 0) {
-              console.log(`[Socket] User ${userId} is now Offline (Grace period expired)`);
-              userPresence.delete(userId);
-              io.emit('users:presence', getPresenceMap());
-            } else {
-              console.log(`[Socket] User ${userId} stayed Online (New tab opened during grace period)`);
-            }
-          }, 5000);
+        // If this was the last socket, mark them offline IMMEDIATELY
+        if (userData.sockets.size === 0) {
+          console.log(`[Socket] User ${userId} is now Offline (Immediate)`);
+          // Clear any existing timer just in case
+          if (userData.disconnectTimer) clearTimeout(userData.disconnectTimer);
+          
+          userPresence.delete(userId);
+          io.emit('users:presence', getPresenceMap());
         }
       }
     };
