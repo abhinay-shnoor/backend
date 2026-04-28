@@ -635,8 +635,9 @@ exports.downloadFile = (req, res) => {
           if (mimeMap[ext]) ct = mimeMap[ext];
         }
 
+        const isView = req.query.view === 'true';
         res.setHeader('Content-Type', ct);
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeName)}"`);
+        res.setHeader('Content-Disposition', `${isView ? 'inline' : 'attachment'}; filename="${encodeURIComponent(safeName)}"`);
         if (remoteRes.headers['content-length'])
           res.setHeader('Content-Length', remoteRes.headers['content-length']);
         res.setHeader('Cache-Control', 'no-cache');
