@@ -604,6 +604,32 @@ exports.downloadFile = (req, res) => {
         return proxyRemoteFile(nextUrl, redirectCount + 1);
       }
 
+      // If Cloudinary returns 401, try to generate a signed URL and retry once
+      if (remoteRes.statusCode === 401 && targetUrl.includes('res.cloudinary.com') && !targetUrl.includes('signature=')) {
+        remoteRes.resume();
+        try {
+          console.log('[Download] 401 detected, attempting signed recovery for:', targetUrl);
+          // Extract public_id from URL: .../upload/v123/folder/id.ext
+          const parts = targetUrl.split('/upload/')[1].split('/');
+          parts.shift(); // remove version (v123)
+          const publicIdWithExt = parts.join('/');
+          const resType = targetUrl.includes('/raw/upload/') ? 'raw' : targetUrl.includes('/video/upload/') ? 'video' : 'image';
+          
+          // Generate signed URL that expires in 1 hour
+          const signedUrl = cloudinary.url(publicIdWithExt, {
+            resource_type: resType,
+            sign_url: true,
+            secure: true,
+            type: 'upload'
+          });
+          
+          console.log('[Download] Retrying with signed URL');
+          return proxyRemoteFile(signedUrl);
+        } catch (err) {
+          console.error('[Download] Signed recovery failed:', err);
+        }
+      }
+
       if (remoteRes.statusCode !== 200) {
         console.error(`[Download] Remote returned ${remoteRes.statusCode} for ${targetUrl}`);
         remoteRes.resume();
