@@ -47,7 +47,10 @@ router.get("/logout", (req, res, next) => {
 router.get("/me", (req, res) => {
   if (req.isAuthenticated()) {
     const { id, name, email, avatar_url, role, is_active } = req.user;
-    return res.json({ id, name, email, avatar_url, role, is_active });
+    return res.json({ 
+      id, name, email, avatar_url, role, is_active,
+      expiresAt: req.session.cookie.expires 
+    });
   }
   return res.status(401).json({ message: "Not authenticated" });
 });
