@@ -74,7 +74,7 @@ const sessionMiddleware = session({
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 60 * 60 * 1000, // 1 hour in milliseconds
+    maxAge: 10 * 60 * 1000, // 10 minutes for testing (was 1 hour)
   },
   rolling: false,
 });
