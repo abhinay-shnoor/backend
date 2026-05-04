@@ -37,10 +37,10 @@ const PORT = process.env.PORT || 5000;
 
 app.set('trust proxy', 1);
 app.use(compression());
-app.use(helmet({ 
-  contentSecurityPolicy: false, 
+app.use(helmet({
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-  frameguard: false 
+  frameguard: false
 }));
 app.use(morgan('dev'));
 app.use(cors({
@@ -74,7 +74,7 @@ const sessionMiddleware = session({
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 10 * 60 * 1000, // 10 minutes for testing (was 1 hour)
+    maxAge: 60 * 60 * 1000, // 1 hour 
   },
   rolling: false,
 });
