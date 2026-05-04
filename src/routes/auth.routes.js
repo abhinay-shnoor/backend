@@ -55,4 +55,18 @@ router.get("/me", (req, res) => {
   return res.status(401).json({ message: "Not authenticated" });
 });
 
+// Refreshes the session timer (touches the session) and returns the new expiry.
+// Called when the user clicks "Continue" on the session expiry warning.
+router.get("/refresh", (req, res) => {
+  if (req.isAuthenticated()) {
+    // Touching the session updates the cookie expiry
+    req.session.touch();
+    return res.json({ 
+      success: true,
+      expiresAt: req.session.cookie.expires 
+    });
+  }
+  return res.status(401).json({ message: "Not authenticated" });
+});
+
 module.exports = router;
