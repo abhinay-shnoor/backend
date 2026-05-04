@@ -61,12 +61,19 @@ router.get("/refresh", (req, res) => {
   if (req.isAuthenticated()) {
     // Touching the session updates the cookie expiry
     req.session.touch();
-    return res.json({ 
-      success: true,
-      expiresAt: req.session.cookie.expires 
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error on refresh:", err);
+        return res.status(500).json({ success: false });
+      }
+      res.json({ 
+        success: true,
+        expiresAt: req.session.cookie.expires 
+      });
     });
+  } else {
+    res.status(401).json({ message: "Not authenticated" });
   }
-  return res.status(401).json({ message: "Not authenticated" });
 });
 
 module.exports = router;
