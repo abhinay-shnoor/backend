@@ -33,6 +33,9 @@ pool.query('SELECT NOW()', async (err) => {
           UNIQUE(user_id, message_id)
         );
       `);
+      await pool.query(`
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;
+      `);
       console.log('Starred/Hide tables initialized successfully');
     } catch (tableErr) {
       console.error('Failed to initialize database tables:', tableErr);

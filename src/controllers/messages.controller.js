@@ -52,7 +52,8 @@ const MSG_SELECT = `
        FROM message_receipts WHERE message_id = m.id),
       '[]'::json
     ) AS receipts,
-    EXISTS (SELECT 1 FROM starred_messages sm WHERE sm.message_id = m.id AND sm.user_id = $1) AS is_starred
+    EXISTS (SELECT 1 FROM starred_messages sm WHERE sm.message_id = m.id AND sm.user_id = $1) AS is_starred,
+    m.is_pinned
   FROM messages m
   JOIN  users u  ON u.id  = m.sender_id
   LEFT JOIN messages pm ON pm.id = m.parent_message_id
@@ -855,5 +856,108 @@ exports.getAttachments = async (req, res) => {
   } catch (err) {
     console.error('getAttachments error:', err);
     res.status(500).json({ message: 'Failed to fetch attachments' });
+  }
+};
+
+exports.pinMessage = async (req, res) => {
+  const { msgId } = req.params;
+  const userId = req.user.id;
+  try {
+    const check = await pool.query(`SELECT space_id, conversation_id, content FROM messages WHERE id=$1`, [msgId]);
+    if (!check.rows.length) return res.status(404).json({ message: 'Message not found' });
+    
+    const { space_id, conversation_id } = check.rows[0];
+    
+    await pool.query(`UPDATE messages SET is_pinned = true WHERE id = $1`, [msgId]);
+    
+    // Fetch updated message
+    const fullMessageResult = await fetchById(msgId, userId);
+    const message = fullMessageResult.rows[0];
+    
+    const io = req.app.get('io');
+    const payload = { messageId: msgId, is_pinned: true, message };
+    
+    if (space_id) {
+      io.to(`space:${space_id}`).emit('message:pinned', payload);
+      // Create system message
+      const systemContent = `📌 ${req.user.name} pinned a message: "${check.rows[0].content.substring(0, 50)}${check.rows[0].content.length > 50 ? '...' : ''}"`;
+      const ins = await pool.query(
+        `INSERT INTO messages (content, sender_id, space_id, is_pinned)
+         VALUES ($1,$2,$3,false) RETURNING id`,
+        [systemContent, req.user.id, space_id]
+      );
+      const sysRes = await fetchById(ins.rows[0].id, userId);
+      io.to(`space:${space_id}`).emit('new_message', sysRes.rows[0]);
+    } else if (conversation_id) {
+      io.to(`dm:${conversation_id}`).emit('message:pinned', payload);
+      // Create system message
+      const systemContent = `📌 ${req.user.name} pinned a message`;
+      const ins = await pool.query(
+        `INSERT INTO messages (content, sender_id, conversation_id, is_pinned)
+         VALUES ($1,$2,$3,false) RETURNING id`,
+        [systemContent, req.user.id, conversation_id]
+      );
+      const sysRes = await fetchById(ins.rows[0].id, userId);
+      io.to(`dm:${conversation_id}`).emit('new_message', sysRes.rows[0]);
+    }
+    
+    res.json(payload);
+  } catch (err) {
+    console.error('pinMessage error:', err);
+    res.status(500).json({ message: 'Failed to pin message' });
+  }
+};
+
+exports.unpinMessage = async (req, res) => {
+  const { msgId } = req.params;
+  const userId = req.user.id;
+  try {
+    const check = await pool.query(`SELECT space_id, conversation_id FROM messages WHERE id=$1`, [msgId]);
+    if (!check.rows.length) return res.status(404).json({ message: 'Message not found' });
+    
+    const { space_id, conversation_id } = check.rows[0];
+    
+    await pool.query(`UPDATE messages SET is_pinned = false WHERE id = $1`, [msgId]);
+    
+    const io = req.app.get('io');
+    const payload = { messageId: msgId, is_pinned: false };
+    
+    if (space_id) io.to(`space:${space_id}`).emit('message:unpinned', payload);
+    else if (conversation_id) io.to(`dm:${conversation_id}`).emit('message:unpinned', payload);
+    
+    res.json(payload);
+  } catch (err) {
+    console.error('unpinMessage error:', err);
+    res.status(500).json({ message: 'Failed to unpin message' });
+  }
+};
+
+exports.getPinnedMessages = async (req, res) => {
+  const { spaceId, conversationId } = req.query;
+  const userId = req.user.id;
+
+  if (!spaceId && !conversationId) {
+    return res.status(400).json({ message: 'spaceId or conversationId required' });
+  }
+
+  try {
+    let sql = `${MSG_SELECT} WHERE mh.message_id IS NULL AND m.is_pinned = true`;
+    const params = [userId];
+
+    if (spaceId) {
+      sql += ` AND m.space_id = $2`;
+      params.push(spaceId);
+    } else if (conversationId) {
+      sql += ` AND m.conversation_id = $2`;
+      params.push(conversationId);
+    }
+
+    sql += ` ${MSG_GROUP_BY} ORDER BY m.created_at DESC`;
+
+    const result = await pool.query(sql, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('getPinnedMessages error:', err);
+    res.status(500).json({ message: 'Failed to fetch pinned messages' });
   }
 };

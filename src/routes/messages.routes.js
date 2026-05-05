@@ -33,4 +33,8 @@ router.delete('/messages/:msgId/star', requireAuth, c.unstarMessage);
 
 router.get('/attachments', requireAuth, c.getAttachments);
 
+router.get('/pinned', requireAuth, c.getPinnedMessages);
+router.post('/messages/:msgId/pin', requireAuth, c.pinMessage);
+router.delete('/messages/:msgId/pin', requireAuth, c.unpinMessage);
+
 module.exports = router;
