@@ -790,3 +790,70 @@ exports.getStarredMessages = async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch starred messages' });
   }
 };
+
+exports.getAttachments = async (req, res) => {
+  const { spaceId, conversationId } = req.query;
+  const userId = req.user.id;
+
+  if (!spaceId && !conversationId) {
+    return res.status(400).json({ message: 'spaceId or conversationId required' });
+  }
+
+  try {
+    let sql = `
+      SELECT 
+        m.id, 
+        m.attachments, 
+        m.created_at, 
+        m.sender_id,
+        u.name AS sender_name,
+        u.avatar_url
+      FROM messages m
+      JOIN users u ON u.id = m.sender_id
+      LEFT JOIN message_hides mh ON mh.message_id = m.id AND mh.user_id = $1
+      WHERE mh.message_id IS NULL 
+      AND m.attachments IS NOT NULL 
+      AND m.attachments::text != '[]'
+    `;
+    const params = [userId];
+
+    if (spaceId) {
+      sql += ` AND m.space_id = $2`;
+      params.push(spaceId);
+    } else if (conversationId) {
+      sql += ` AND m.conversation_id = $2`;
+      params.push(conversationId);
+    }
+
+    sql += ` ORDER BY m.created_at DESC`;
+
+    const result = await pool.query(sql, params);
+    
+    // Flatten attachments since each message can have multiple
+    const allAttachments = [];
+    result.rows.forEach(row => {
+      let attachments = row.attachments;
+      if (typeof attachments === 'string') {
+        try { attachments = JSON.parse(attachments); } catch (e) { attachments = []; }
+      }
+      
+      if (Array.isArray(attachments)) {
+        attachments.forEach(att => {
+          allAttachments.push({
+            ...att,
+            messageId: row.id,
+            senderId: row.sender_id,
+            senderName: row.sender_name,
+            senderAvatar: row.avatar_url,
+            createdAt: row.created_at
+          });
+        });
+      }
+    });
+
+    res.json(allAttachments);
+  } catch (err) {
+    console.error('getAttachments error:', err);
+    res.status(500).json({ message: 'Failed to fetch attachments' });
+  }
+};

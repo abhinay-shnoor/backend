@@ -31,4 +31,6 @@ router.get('/starred', requireAuth, c.getStarredMessages);
 router.post('/messages/:msgId/star', requireAuth, c.starMessage);
 router.delete('/messages/:msgId/star', requireAuth, c.unstarMessage);
 
+router.get('/attachments', requireAuth, c.getAttachments);
+
 module.exports = router;
