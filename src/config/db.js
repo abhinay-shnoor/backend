@@ -35,6 +35,7 @@ pool.query('SELECT NOW()', async (err) => {
       `);
       await pool.query(`
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE;
       `);
       console.log('Starred/Hide tables initialized successfully');
     } catch (tableErr) {

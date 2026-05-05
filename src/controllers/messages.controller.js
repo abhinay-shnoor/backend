@@ -53,7 +53,8 @@ const MSG_SELECT = `
       '[]'::json
     ) AS receipts,
     EXISTS (SELECT 1 FROM starred_messages sm WHERE sm.message_id = m.id AND sm.user_id = $1) AS is_starred,
-    m.is_pinned
+    m.is_pinned,
+    m.is_system
   FROM messages m
   JOIN  users u  ON u.id  = m.sender_id
   LEFT JOIN messages pm ON pm.id = m.parent_message_id
@@ -882,8 +883,8 @@ exports.pinMessage = async (req, res) => {
       // Create system message
       const systemContent = `📌 ${req.user.name} pinned a message: "${check.rows[0].content.substring(0, 50)}${check.rows[0].content.length > 50 ? '...' : ''}"`;
       const ins = await pool.query(
-        `INSERT INTO messages (content, sender_id, space_id, is_pinned)
-         VALUES ($1,$2,$3,false) RETURNING id`,
+        `INSERT INTO messages (content, sender_id, space_id, is_pinned, is_system)
+         VALUES ($1,$2,$3,false,true) RETURNING id`,
         [systemContent, req.user.id, space_id]
       );
       const sysRes = await fetchById(ins.rows[0].id, userId);
@@ -893,8 +894,8 @@ exports.pinMessage = async (req, res) => {
       // Create system message
       const systemContent = `📌 ${req.user.name} pinned a message`;
       const ins = await pool.query(
-        `INSERT INTO messages (content, sender_id, conversation_id, is_pinned)
-         VALUES ($1,$2,$3,false) RETURNING id`,
+        `INSERT INTO messages (content, sender_id, conversation_id, is_pinned, is_system)
+         VALUES ($1,$2,$3,false,true) RETURNING id`,
         [systemContent, req.user.id, conversation_id]
       );
       const sysRes = await fetchById(ins.rows[0].id, userId);
@@ -922,8 +923,27 @@ exports.unpinMessage = async (req, res) => {
     const io = req.app.get('io');
     const payload = { messageId: msgId, is_pinned: false };
     
-    if (space_id) io.to(`space:${space_id}`).emit('message:unpinned', payload);
-    else if (conversation_id) io.to(`dm:${conversation_id}`).emit('message:unpinned', payload);
+    if (space_id) {
+      io.to(`space:${space_id}`).emit('message:unpinned', payload);
+      const systemContent = `📌 ${req.user.name} unpinned a message`;
+      const ins = await pool.query(
+        `INSERT INTO messages (content, sender_id, space_id, is_pinned, is_system)
+         VALUES ($1,$2,$3,false,true) RETURNING id`,
+        [systemContent, req.user.id, space_id]
+      );
+      const sysRes = await fetchById(ins.rows[0].id, userId);
+      io.to(`space:${space_id}`).emit('new_message', sysRes.rows[0]);
+    } else if (conversation_id) {
+      io.to(`dm:${conversation_id}`).emit('message:unpinned', payload);
+      const systemContent = `📌 ${req.user.name} unpinned a message`;
+      const ins = await pool.query(
+        `INSERT INTO messages (content, sender_id, conversation_id, is_pinned, is_system)
+         VALUES ($1,$2,$3,false,true) RETURNING id`,
+        [systemContent, req.user.id, conversation_id]
+      );
+      const sysRes = await fetchById(ins.rows[0].id, userId);
+      io.to(`dm:${conversation_id}`).emit('new_message', sysRes.rows[0]);
+    }
     
     res.json(payload);
   } catch (err) {
