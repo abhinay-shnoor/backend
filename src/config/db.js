@@ -37,6 +37,16 @@ pool.query('SELECT NOW()', async (err) => {
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_system BOOLEAN DEFAULT FALSE;
       `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS archived_chats (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          chat_id INTEGER NOT NULL,
+          chat_type VARCHAR(10) NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(user_id, chat_id, chat_type)
+        );
+      `);
       console.log('Starred/Hide tables initialized successfully');
     } catch (tableErr) {
       console.error('Failed to initialize database tables:', tableErr);

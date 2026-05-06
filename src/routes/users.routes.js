@@ -13,4 +13,8 @@ router.patch('/me/preferences', requireAuth,              c.updatePreferences);
 router.patch('/:id/role',      requireAuth, requireAdmin, c.updateUserRole);
 router.patch('/:id/status',    requireAuth, requireAdmin, c.updateUserStatus);
 
+router.get('/me/archived-chats', requireAuth, c.getArchivedChats);
+router.post('/me/archived-chats', requireAuth, c.archiveChat);
+router.delete('/me/archived-chats/:type/:id', requireAuth, c.unarchiveChat);
+
 module.exports = router;

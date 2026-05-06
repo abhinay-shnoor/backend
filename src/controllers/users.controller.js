@@ -154,3 +154,47 @@ exports.updateUserStatus = async (req, res) => {
     res.status(500).json({ message: 'Failed to update status' });
   }
 };
+
+exports.getArchivedChats = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT chat_id, chat_type FROM archived_chats WHERE user_id=$1`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('getArchivedChats error:', err);
+    res.status(500).json({ message: 'Failed to fetch archived chats' });
+  }
+};
+
+exports.archiveChat = async (req, res) => {
+  const { chat_id, chat_type } = req.body;
+  if (!chat_id || !['space', 'dm'].includes(chat_type)) {
+    return res.status(400).json({ message: 'Valid chat_id and chat_type are required' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO archived_chats (user_id, chat_id, chat_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+      [req.user.id, chat_id, chat_type]
+    );
+    res.json({ message: 'Chat archived successfully' });
+  } catch (err) {
+    console.error('archiveChat error:', err);
+    res.status(500).json({ message: 'Failed to archive chat' });
+  }
+};
+
+exports.unarchiveChat = async (req, res) => {
+  const { id: chat_id, type: chat_type } = req.params;
+  try {
+    await pool.query(
+      `DELETE FROM archived_chats WHERE user_id=$1 AND chat_id=$2 AND chat_type=$3`,
+      [req.user.id, chat_id, chat_type]
+    );
+    res.json({ message: 'Chat unarchived successfully' });
+  } catch (err) {
+    console.error('unarchiveChat error:', err);
+    res.status(500).json({ message: 'Failed to unarchive chat' });
+  }
+};
