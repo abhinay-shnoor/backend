@@ -17,4 +17,11 @@ router.get('/me/archived-chats', requireAuth, c.getArchivedChats);
 router.post('/me/archived-chats', requireAuth, c.archiveChat);
 router.delete('/me/archived-chats/:type/:id', requireAuth, c.unarchiveChat);
 
+// PIN and Lock routes
+router.post('/me/pin', requireAuth, c.setPin);
+router.post('/me/pin/verify', requireAuth, c.verifyPin);
+router.get('/me/locked-chats', requireAuth, c.getLockedChats);
+router.post('/me/locked-chats', requireAuth, c.lockChat);
+router.delete('/me/locked-chats/:type/:id', requireAuth, c.unlockChat);
+
 module.exports = router;

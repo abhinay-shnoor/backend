@@ -31,11 +31,22 @@ exports.getAllUsersAdmin = async (req, res) => {
 exports.getMe = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id,name,email,avatar_url,role,is_active,preferences,created_at FROM users WHERE id=$1`,
+      `SELECT id,name,email,avatar_url,role,is_active,preferences,pin,created_at FROM users WHERE id=$1`,
       [req.user.id]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'User not found' });
-    res.json(result.rows[0]);
+    const user = result.rows[0];
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatar_url: user.avatar_url,
+      role: user.role,
+      is_active: user.is_active,
+      preferences: user.preferences,
+      hasPin: !!user.pin,
+      created_at: user.created_at
+    });
   } catch (err) {
     console.error('getMe error:', err);
     res.status(500).json({ message: 'Failed to fetch profile' });
@@ -196,5 +207,105 @@ exports.unarchiveChat = async (req, res) => {
   } catch (err) {
     console.error('unarchiveChat error:', err);
     res.status(500).json({ message: 'Failed to unarchive chat' });
+  }
+};
+
+const crypto = require('crypto');
+
+function hashPin(pin) {
+  return crypto.createHash('sha256').update(pin).digest('hex');
+}
+
+exports.setPin = async (req, res) => {
+  const { pin } = req.body;
+  if (!pin || typeof pin !== 'string' || pin.trim().length < 4) {
+    return res.status(400).json({ message: 'PIN must be at least 4 characters' });
+  }
+  try {
+    const hashed = hashPin(pin.trim());
+    await pool.query(
+      `UPDATE users SET pin=$1 WHERE id=$2`,
+      [hashed, req.user.id]
+    );
+    if (req.user) {
+      req.user.pin = hashed;
+    }
+    res.json({ success: true, message: 'PIN set successfully' });
+  } catch (err) {
+    console.error('setPin error:', err);
+    res.status(500).json({ message: 'Failed to set PIN' });
+  }
+};
+
+exports.verifyPin = async (req, res) => {
+  const { pin } = req.body;
+  if (!pin) {
+    return res.status(400).json({ message: 'PIN is required' });
+  }
+  try {
+    const userResult = await pool.query(
+      `SELECT pin FROM users WHERE id=$1`,
+      [req.user.id]
+    );
+    if (!userResult.rows.length) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    const storedHashed = userResult.rows[0].pin;
+    if (!storedHashed) {
+      return res.status(400).json({ message: 'No PIN is set for this user' });
+    }
+    const incomingHashed = hashPin(pin.trim());
+    if (storedHashed === incomingHashed) {
+      res.json({ success: true });
+    } else {
+      res.json({ success: false, message: 'Incorrect PIN' });
+    }
+  } catch (err) {
+    console.error('verifyPin error:', err);
+    res.status(500).json({ message: 'Failed to verify PIN' });
+  }
+};
+
+exports.getLockedChats = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT chat_id, chat_type FROM locked_chats WHERE user_id=$1`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('getLockedChats error:', err);
+    res.status(500).json({ message: 'Failed to fetch locked chats' });
+  }
+};
+
+exports.lockChat = async (req, res) => {
+  const { chat_id, chat_type } = req.body;
+  if (!chat_id || !['space', 'dm'].includes(chat_type)) {
+    return res.status(400).json({ message: 'Valid chat_id and chat_type are required' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO locked_chats (user_id, chat_id, chat_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+      [req.user.id, chat_id, chat_type]
+    );
+    res.json({ message: 'Chat locked successfully' });
+  } catch (err) {
+    console.error('lockChat error:', err);
+    res.status(500).json({ message: 'Failed to lock chat' });
+  }
+};
+
+exports.unlockChat = async (req, res) => {
+  const { id: chat_id, type: chat_type } = req.params;
+  try {
+    await pool.query(
+      `DELETE FROM locked_chats WHERE user_id=$1 AND chat_id=$2 AND chat_type=$3`,
+      [req.user.id, chat_id, chat_type]
+    );
+    res.json({ message: 'Chat unlocked successfully' });
+  } catch (err) {
+    console.error('unlockChat error:', err);
+    res.status(500).json({ message: 'Failed to unlock chat' });
   }
 };

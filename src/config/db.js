@@ -16,6 +16,9 @@ pool.query('SELECT NOW()', async (err) => {
     console.log('Database connection established successfully');
     try {
       await pool.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS pin VARCHAR(255);
+      `);
+      await pool.query(`
         CREATE TABLE IF NOT EXISTS starred_messages (
           id SERIAL PRIMARY KEY,
           user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -47,7 +50,17 @@ pool.query('SELECT NOW()', async (err) => {
           UNIQUE(user_id, chat_id, chat_type)
         );
       `);
-      console.log('Starred/Hide tables initialized successfully');
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS locked_chats (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          chat_id INTEGER NOT NULL,
+          chat_type VARCHAR(10) NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(user_id, chat_id, chat_type)
+        );
+      `);
+      console.log('Starred/Hide/Lock tables initialized successfully');
     } catch (tableErr) {
       console.error('Failed to initialize database tables:', tableErr);
     }
