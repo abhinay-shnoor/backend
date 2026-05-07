@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const { uploadBuffer } = require('../config/cloudinary');
 const { uploadSingleAvatar, saveFileToStorage } = require('../config/storage');
+const fs = require('fs');
 
 exports.avatarUploadMiddleware = uploadSingleAvatar;
 
@@ -91,21 +92,40 @@ exports.updateAvatar = async (req, res) => {
   }
 };
 
-// Upload avatar to appropriate storage (S3 or local)
 exports.uploadAvatarToCloud = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'No file provided' });
   try {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const fileData = await saveFileToStorage(req.file, baseUrl, 'avatars');
-    
+    let avatarUrl;
+
+    // On Render (ephemeral filesystem) or if Cloudinary is configured, always use Cloudinary for persistence
+    if (process.env.RENDER || process.env.CLOUDINARY_CLOUD_NAME) {
+      const buffer = req.file.buffer || fs.readFileSync(req.file.path);
+      const result = await uploadBuffer(buffer, {
+        folder: 'avatars',
+        resource_type: 'image',
+        access_mode: 'public'
+      });
+      avatarUrl = result.secure_url;
+
+      // Clean up temp local file if multer wrote to disk
+      if (req.file.path && fs.existsSync(req.file.path)) {
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+      }
+    } else {
+      // Non-Cloudinary/Local fallback
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const fileData = await saveFileToStorage(req.file, baseUrl, 'avatars');
+      avatarUrl = fileData.url;
+    }
+
     const dbResult = await pool.query(
       `UPDATE users SET avatar_url=$1 WHERE id=$2 RETURNING id,name,email,avatar_url,role`,
-      [fileData.url, req.user.id]
+      [avatarUrl, req.user.id]
     );
     res.json(dbResult.rows[0]);
   } catch (err) {
     console.error('uploadAvatarToCloud error:', err);
-    res.status(500).json({ message: 'Failed to upload avatar' });
+    res.status(500).json({ message: 'Failed to upload avatar: ' + (err.message || 'Unknown error') });
   }
 };
 
