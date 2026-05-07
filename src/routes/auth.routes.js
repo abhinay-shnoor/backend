@@ -46,9 +46,10 @@ router.get("/logout", (req, res, next) => {
 // by AuthContext to check if the user is still logged in.
 router.get("/me", (req, res) => {
   if (req.isAuthenticated()) {
-    const { id, name, email, avatar_url, role, is_active, pin } = req.user;
+    const { id, name, email, avatar_url, role, is_active, pin, contact_no, alternate_email, department, designation } = req.user;
     return res.json({ 
       id, name, email, avatar_url, role, is_active,
+      contact_no, alternate_email, department, designation,
       hasPin: !!pin,
       expiresAt: req.session.cookie.expires 
     });

@@ -17,6 +17,10 @@ pool.query('SELECT NOW()', async (err) => {
     try {
       await pool.query(`
         ALTER TABLE users ADD COLUMN IF NOT EXISTS pin VARCHAR(255);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_no VARCHAR(50);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS alternate_email VARCHAR(255);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS designation VARCHAR(100);
       `);
       await pool.query(`
         CREATE TABLE IF NOT EXISTS starred_messages (

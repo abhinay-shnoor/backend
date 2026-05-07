@@ -7,7 +7,7 @@ exports.avatarUploadMiddleware = uploadSingleAvatar;
 exports.getUsers = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id,name,email,avatar_url,role,is_active,created_at FROM users WHERE is_active=true ORDER BY name ASC`
+      `SELECT id,name,email,avatar_url,role,is_active,created_at,contact_no,alternate_email,department,designation FROM users WHERE is_active=true ORDER BY name ASC`
     );
     res.json(result.rows);
   } catch (err) {
@@ -19,7 +19,7 @@ exports.getUsers = async (req, res) => {
 exports.getAllUsersAdmin = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id,name,email,avatar_url,role,is_active,created_at FROM users ORDER BY created_at DESC`
+      `SELECT id,name,email,avatar_url,role,is_active,created_at,contact_no,alternate_email,department,designation FROM users ORDER BY created_at DESC`
     );
     res.json(result.rows);
   } catch (err) {
@@ -31,7 +31,7 @@ exports.getAllUsersAdmin = async (req, res) => {
 exports.getMe = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id,name,email,avatar_url,role,is_active,preferences,pin,created_at FROM users WHERE id=$1`,
+      `SELECT id,name,email,avatar_url,role,is_active,preferences,pin,created_at,contact_no,alternate_email,department,designation FROM users WHERE id=$1`,
       [req.user.id]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'User not found' });
@@ -45,7 +45,11 @@ exports.getMe = async (req, res) => {
       is_active: user.is_active,
       preferences: user.preferences,
       hasPin: !!user.pin,
-      created_at: user.created_at
+      created_at: user.created_at,
+      contact_no: user.contact_no,
+      alternate_email: user.alternate_email,
+      department: user.department,
+      designation: user.designation
     });
   } catch (err) {
     console.error('getMe error:', err);
@@ -54,13 +58,13 @@ exports.getMe = async (req, res) => {
 };
 
 exports.updateMe = async (req, res) => {
-  const { name } = req.body;
+  const { name, contact_no, alternate_email, department, designation } = req.body;
   if (!name?.trim()) return res.status(400).json({ message: 'Name cannot be empty' });
   if (name.trim().length < 2) return res.status(400).json({ message: 'Name must be at least 2 characters' });
   try {
     const result = await pool.query(
-      `UPDATE users SET name=$1 WHERE id=$2 RETURNING id,name,email,avatar_url,role`,
-      [name.trim(), req.user.id]
+      `UPDATE users SET name=$1, contact_no=$2, alternate_email=$3, department=$4, designation=$5 WHERE id=$6 RETURNING id,name,email,avatar_url,role,contact_no,alternate_email,department,designation`,
+      [name.trim(), contact_no || null, alternate_email || null, department || null, designation || null, req.user.id]
     );
     res.json(result.rows[0]);
   } catch (err) {
